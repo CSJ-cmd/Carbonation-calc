@@ -7,10 +7,9 @@ st.set_page_config(page_title="탄산화 평가 프로그램", page_icon="🏗�
 
 # 제목 및 설명
 st.title("🏗️ 콘크리트 탄산화 평가")
-st.markdown("정밀안전진단 기준에 따른 **탄산화 잔여 깊이, 속도계수, 등급**을 판정합니다.")
+st.markdown("정밀안전진단 기준에 따른 **탄산화 잔여 깊이, 속도계수, 등급** 및 **잔존 수명**을 판정합니다.")
 
 # --- 사이드바 (입력창) ---
-# 모바일에서는 상단에 접이식 메뉴로 표시됩니다.
 with st.sidebar:
     st.header("📝 데이터 입력")
     measured_depth = st.number_input("1. 측정 탄산화 깊이 (mm)", min_value=0.0, value=12.0, step=0.1, format="%.1f")
@@ -29,7 +28,25 @@ if calc_button:
     if age_years > 0:
         rate_coeff = measured_depth / math.sqrt(age_years)
     
-    # 3. 등급 판정 (조건식)
+    # 3. 수명 예측 (추가된 부분)
+    # 공식: (잔여깊이 / 속도계수) ^ 2
+    # 예외처리: 속도계수가 0이거나(탄산화 안됨), 잔여깊이가 0 이하(이미 도달)인 경우
+    life_expectancy = 0.0
+    life_msg = "" # 결과 표기용 메시지
+
+    if rate_coeff > 0:
+        if remaining_depth > 0:
+            life_expectancy = (remaining_depth / rate_coeff) ** 2
+            life_msg = f"{life_expectancy:.1f} 년"
+        else:
+            life_expectancy = 0.0
+            life_msg = "0년 (이미 도달)"
+    else:
+        # 탄산화 깊이가 0인 경우
+        life_expectancy = 999.9 
+        life_msg = "예측 불가 (진행 안됨)"
+
+    # 4. 등급 판정 (조건식)
     grade = ""
     status_color = ""  # 결과창 색상 (green, orange, red)
     desc = ""
@@ -59,12 +76,15 @@ if calc_button:
     st.divider()
     st.subheader("📊 분석 결과")
 
-    # 주요 지표 (큰 글씨)
-    col1, col2 = st.columns(2)
+    # 주요 지표 (3개의 컬럼으로 변경)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(label="잔여 깊이", value=f"{remaining_depth:.1f} mm")
     with col2:
         st.metric(label="속도 계수", value=f"{rate_coeff:.4f}")
+    with col3:
+        # 수명 예측 결과 표시
+        st.metric(label="예측 잔존 수명", value=life_msg)
 
     # 판정 결과 박스
     if status_color == "green":
@@ -80,8 +100,15 @@ if calc_button:
     st.markdown("---")
     st.caption("요약 테이블")
     df = pd.DataFrame({
-        "항목": ["측정 깊이", "경과 년수", "설계 피복", "잔여 깊이", "속도 계수"],
-        "값": [f"{measured_depth}mm", f"{age_years}년", f"{design_cover}mm", f"{remaining_depth}mm", f"{rate_coeff:.4f}"]
+        "항목": ["측정 깊이", "경과 년수", "설계 피복", "잔여 깊이", "속도 계수", "예측 잔존 수명"],
+        "값": [
+            f"{measured_depth}mm", 
+            f"{age_years}년", 
+            f"{design_cover}mm", 
+            f"{remaining_depth}mm", 
+            f"{rate_coeff:.4f}",
+            life_msg
+        ]
     })
     st.dataframe(df, use_container_width=True, hide_index=True)
 
