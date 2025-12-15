@@ -7,13 +7,13 @@ st.set_page_config(page_title="탄산화 평가 프로그램", page_icon="🏗�
 
 # 제목 및 설명
 st.title("🏗️ 콘크리트 탄산화 평가")
-st.markdown("사용자 지정 기준(잔여 깊이)에 따른 **탄산화 등급 및 잔존 수명**을 판정합니다.")
+st.markdown("측정된 탄산화 깊이에 따른 **탄산화 등급 및 잔존 수명**을 판정합니다.")
 
 # --- 사이드바 (입력창) ---
 with st.sidebar:
     st.header("📝 데이터 입력")
     measured_depth = st.number_input("1. 측정 탄산화 깊이 (mm)", min_value=0.0, value=12.0, step=0.1, format="%.1f")
-    age_years = st.number_input("2. 건물 경과 년수 (년)", min_value=1, value=20, step=1)
+    age_years = st.number_input("2. 구조물 경과 년수 (년)", min_value=1, value=20, step=1)
     design_cover = st.number_input("3. 설계 피복 두께 (mm)", min_value=10.0, value=40.0, step=1.0)
     
     calc_button = st.button("계산 실행", type="primary")
@@ -107,3 +107,4 @@ if calc_button:
     
 else:
     st.info("👈 왼쪽(모바일은 상단 화살표)에서 값을 입력하고 '계산 실행'을 눌러주세요.")
+
