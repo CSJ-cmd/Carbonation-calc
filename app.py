@@ -118,7 +118,7 @@ def convert_df(df):
 # =========================================================
 
 st.title("🏗️ 구조물 안전진단 통합 평가 System")
-st.markdown("정밀안전진단 기준에 따른 **탄산화**, **반발경도(일괄처리)**, **통계 분석** 도구입니다.")
+st.markdown("정밀안전진단 기준에 따른 **탄산화**, **반발경도(일괄처리)**, **통계 및 안전성 평가** 도구입니다.")
 
 # 사이드바
 with st.sidebar:
@@ -134,7 +134,7 @@ with st.sidebar:
     3. **파일 업로드**: 대량의 CSV/Excel 파일 처리
     """)
 
-tab1, tab2, tab3 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가", "📈 3. 강도 통계 (직접 입력)"])
+tab1, tab2, tab3 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가", "📈 3. 강도 통계 및 비교"])
 
 # ---------------------------------------------------------
 # [Tab 1] 탄산화 평가
@@ -187,7 +187,6 @@ with tab1:
 with tab2:
     st.header("🔨 반발경도 강도 산정")
     
-    # 모드 선택 라디오 버튼 (가로형)
     mode = st.radio(
         "작업 모드 선택", 
         ["📝 단일 지점 입력", "📋 다중 지점 직접 입력 (Batch)", "📂 파일 업로드 (Excel/CSV)"], 
@@ -195,9 +194,7 @@ with tab2:
     )
     st.divider()
 
-    # =========================================================
     # [Mode A] 단일 지점 입력
-    # =========================================================
     if mode == "📝 단일 지점 입력":
         with st.container():
             col1, col2, col3 = st.columns(3)
@@ -218,27 +215,23 @@ with tab2:
             else:
                 s_mean = res["Mean_Strength"]
                 ratio = (s_mean / design_fck) * 100
-                grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
+                grade_mk = "A (우수)" if ratio >= 100 else ("B (양호)" if ratio >= 90 else ("C (미흡)" if ratio >= 75 else "D/E (부족)"))
                 
                 st.success(f"✅ 평균 추정강도: **{s_mean:.2f} MPa** (설계 대비 {ratio:.1f}%) → 등급: **{grade_mk}**")
                 
-                # 상세 표
                 df_res = pd.DataFrame({
                     "공식": ["일본건축", "일본재료", "과기부", "권영웅", "KALIS"],
                     "강도(MPa)": res["Est_Strengths"]
                 })
                 st.dataframe(df_res.style.format("{:.2f}").highlight_max(color="#d6eaf8"), use_container_width=True)
 
-    # =========================================================
-    # [Mode B] 다중 지점 직접 입력 (Batch) - NEW
-    # =========================================================
+    # [Mode B] 다중 지점 직접 입력 (Batch)
     elif mode == "📋 다중 지점 직접 입력 (Batch)":
         st.info("💡 엑셀 등에서 데이터를 복사(Ctrl+C)하여 아래에 붙여넣으세요. (탭 또는 콤마로 구분)")
         
         with st.expander("📝 입력 형식 예시 (클릭하여 확인)", expanded=True):
             st.markdown("""
             **형식**: `지점명` | `각도` | `재령` | `설계강도` | `측정값 1` ... `측정값 20`
-            (각 항목은 탭(Tab) 또는 콤마(,)로 구분되어야 합니다. 엑셀에서 복사하면 자동으로 탭 구분됩니다.)
             
             **예시 데이터**:
             ```text
@@ -258,18 +251,12 @@ with tab2:
                 
                 for i, line in enumerate(lines):
                     if not line.strip(): continue
-                    
-                    # 구분자 처리 (탭 우선, 없으면 콤마)
-                    if '\t' in line:
-                        parts = line.split('\t')
-                    else:
-                        parts = line.split(',')
-                    
-                    # 빈 값 제거
+                    if '\t' in line: parts = line.split('\t')
+                    else: parts = line.split(',')
                     parts = [p.strip() for p in parts if p.strip()]
                     
                     if len(parts) < 5:
-                        st.error(f"Line {i+1}: 데이터 형식이 올바르지 않습니다. (최소 5개 항목 필요)")
+                        st.error(f"Line {i+1}: 데이터 형식이 올바르지 않습니다.")
                         continue
                         
                     try:
@@ -277,10 +264,8 @@ with tab2:
                         angle_val = float(parts[1])
                         age_val = float(parts[2])
                         fck_val = float(parts[3])
-                        # 나머지 부분은 측정값
                         readings = [float(x) for x in parts[4:]]
                         
-                        # 계산 수행
                         success, res = calculate_strength(readings, angle_val, age_val)
                         
                         entry = {
@@ -289,7 +274,6 @@ with tab2:
                             "상태": "성공" if success else "실패",
                             "평균추정강도(MPa)": 0.0,
                             "판정": "-",
-                            "입력값수": len(readings),
                             "비고": ""
                         }
                         
@@ -309,31 +293,17 @@ with tab2:
                         results.append(entry)
                         
                     except ValueError:
-                        st.error(f"Line {i+1}: 숫자 변환 오류. 입력 형식을 확인하세요.")
+                        st.error(f"Line {i+1}: 숫자 변환 오류.")
                 
                 if results:
                     st.success(f"✅ 총 {len(results)}개 지점 분석 완료")
                     df_final = pd.DataFrame(results)
-                    
-                    st.dataframe(
-                        df_final.style.format({"평균추정강도(MPa)": "{:.2f}"})
-                        .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
-                        use_container_width=True
-                    )
-                    
-                    st.download_button(
-                        f"📥 결과 다운로드 (CSV)", 
-                        convert_df(df_final), 
-                        f"{project_name}_Batch결과.csv", 
-                        "text/csv"
-                    )
+                    st.dataframe(df_final.style.format({"평균추정강도(MPa)": "{:.2f}"}).applymap(lambda v: 'color: red;' if v == '실패' or v == 'D/E' else None), use_container_width=True)
+                    st.download_button(f"📥 결과 다운로드 (CSV)", convert_df(df_final), f"{project_name}_Batch결과.csv", "text/csv")
 
-    # =========================================================
-    # [Mode C] 파일 업로드 (Excel/CSV)
-    # =========================================================
+    # [Mode C] 파일 업로드
     elif mode == "📂 파일 업로드 (Excel/CSV)":
         st.info("💡 대량의 데이터를 파일로 업로드하여 처리합니다.")
-        
         with st.expander("📥 입력 양식 다운로드"):
             sample_data = pd.DataFrame({
                 "Location": ["P1-Top", "P1-Bottom"],
@@ -348,25 +318,18 @@ with tab2:
         
         if uploaded_file:
             try:
-                if uploaded_file.name.endswith('.csv'):
-                    df_upload = pd.read_csv(uploaded_file)
-                else:
-                    df_upload = pd.read_excel(uploaded_file)
+                if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file)
+                else: df_upload = pd.read_excel(uploaded_file)
                 
                 required_cols = ["Location", "Angle", "Age", "Design_Fck", "Readings"]
                 if not all(col in df_upload.columns for col in required_cols):
                     st.error(f"❌ 양식이 맞지 않습니다. 필수 컬럼: {required_cols}")
                 else:
                     results = []
-                    progress_bar = st.progress(0)
-                    
                     for idx, row in df_upload.iterrows():
                         raw_str = str(row["Readings"]).replace(',', ' ')
-                        try:
-                            readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
-                        except:
-                            readings = []
-                            
+                        try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
+                        except: readings = []
                         success, res = calculate_strength(readings, row["Angle"], row["Age"])
                         
                         entry = {
@@ -377,36 +340,38 @@ with tab2:
                             "판정": "-",
                             "비고": ""
                         }
-                        
                         if success:
                             s_mean = res["Mean_Strength"]
                             ratio = (s_mean / row["Design_Fck"]) * 100
                             grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
-                            
                             entry["평균추정강도(MPa)"] = round(s_mean, 2)
                             entry["설계비(%)"] = round(ratio, 1)
                             entry["판정"] = grade_mk
                             entry["보정후R0"] = round(res["R0"], 1)
-                            entry["기각수"] = res["Discard"]
                         else:
                             entry["비고"] = res
                         results.append(entry)
-                        progress_bar.progress((idx + 1) / len(df_upload))
                     
-                    st.success("✅ 분석 완료!")
                     df_final = pd.DataFrame(results)
                     st.dataframe(df_final.style.format({"평균추정강도(MPa)": "{:.2f}"}), use_container_width=True)
                     st.download_button(f"📥 결과 다운로드", convert_df(df_final), f"{project_name}_파일분석결과.csv", "text/csv")
-                    
             except Exception as e:
                 st.error(f"오류 발생: {e}")
 
 # ---------------------------------------------------------
-# [Tab 3] 통계 분석 (유지)
+# [Tab 3] 강도 통계 및 비교 (설계강도 입력 추가)
 # ---------------------------------------------------------
 with tab3:
-    st.header("📈 강도 데이터 통계 분석")
-    input_stats = st.text_area("강도 데이터 입력 (MPa)", placeholder="예: 21.5 22.1 23.0 ...", height=100)
+    st.header("📈 강도 통계 및 안전성 평가")
+    st.markdown("##### 📝 산정된 강도 값들을 입력하여 통계를 확인하고 **설계강도**와 비교하세요.")
+    
+    with st.container():
+        # [NEW] 설계강도 입력란 추가 (화면 분할)
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            design_fck_stats = st.number_input("설계기준강도 (MPa)", min_value=15.0, max_value=100.0, value=24.0, step=1.0, key="fck_stats", help="비교 기준이 될 설계 강도를 입력하세요.")
+        with c2:
+            input_stats = st.text_area("강도 데이터 입력 (MPa)", placeholder="예: 21.5 22.1 23.0 24.5 ... (공백/줄바꿈 구분)", height=100)
         
     if st.button("분석 실행", key="btn_stat"):
         try:
@@ -414,16 +379,66 @@ with tab3:
             if len(data_s) < 2:
                 st.warning("데이터가 2개 이상 필요합니다.")
             else:
+                # 통계 계산
                 st_mean = np.mean(data_s)
                 st_std = np.std(data_s, ddof=1)
                 st_cov = (st_std / st_mean * 100) if st_mean > 0 else 0
+                st_max = np.max(data_s)
+                st_min = np.min(data_s)
                 
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("평균", f"{st_mean:.2f} MPa")
-                c2.metric("최대", f"{max(data_s):.2f} MPa")
-                c3.metric("최소", f"{min(data_s):.2f} MPa")
-                c4.metric("변동계수", f"{st_cov:.1f} %")
+                # [NEW] 설계강도 대비 비교
+                ratio = (st_mean / design_fck_stats) * 100
+                grade_mk = "A (우수)" if ratio >= 100 else ("B (양호)" if ratio >= 90 else ("C (미흡)" if ratio >= 75 else "D/E (부족)"))
+                grade_color = "green" if ratio >= 100 else ("blue" if ratio >= 90 else ("orange" if ratio >= 75 else "red"))
+
+                # 1. 결과 요약 (메트릭)
+                st.divider()
+                st.success(f"✅ 총 {len(data_s)}개 데이터 분석 완료")
                 
-                st.bar_chart(sorted(data_s))
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("평균 강도", f"{st_mean:.2f} MPa")
+                col2.metric("설계기준강도", f"{design_fck_stats:.1f} MPa")
+                col3.metric("강도비 (평균/설계)", f"{ratio:.1f} %", delta=f"{ratio-100:.1f}%")
+                col4.metric("종합 판정", grade_mk)
+                
+                # 2. 통계 지표
+                st.markdown("---")
+                st.subheader("📊 상세 통계 지표")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("최대값 (Max)", f"{st_max:.2f} MPa")
+                k2.metric("최소값 (Min)", f"{st_min:.2f} MPa")
+                k3.metric("표준편차 (SD)", f"{st_std:.2f}")
+                k4.metric("변동계수 (COV)", f"{st_cov:.1f} %")
+                
+                # 3. 시각화 (설계강도 라인 포함)
+                st.markdown("---")
+                v1, v2 = st.columns([2, 1])
+                with v1:
+                    st.subheader("📉 데이터 분포 및 기준선")
+                    chart_data = pd.DataFrame({
+                        "강도": sorted(data_s),
+                        "순번": range(1, len(data_s)+1)
+                    })
+                    
+                    # Altair를 쓰지 않고 내장 차트로 간단히 구현 (설계강도는 텍스트로 표현)
+                    st.bar_chart(chart_data.set_index("순번"))
+                    st.caption(f"👆 붉은 점선(마음의 눈으로 보세요): 설계강도 {design_fck_stats} MPa")
+                    
+                    # 설계강도보다 낮은 데이터 개수 확인
+                    fail_cnt = sum(1 for x in data_s if x < design_fck_stats)
+                    if fail_cnt > 0:
+                        st.warning(f"⚠️ 설계강도({design_fck_stats} MPa) 미달 데이터: {fail_cnt}개 발견됨")
+                    else:
+                        st.success("✅ 모든 데이터가 설계강도를 상회합니다.")
+
+                with v2:
+                    st.subheader("📋 데이터 목록")
+                    df_list = pd.DataFrame(data_s, columns=["강도(MPa)"])
+                    st.dataframe(
+                        df_list.style.format("{:.2f}")
+                        .applymap(lambda v: 'color: red; font-weight: bold;' if v < design_fck_stats else None),
+                        use_container_width=True,
+                        height=300
+                    )
         except:
             st.error("숫자만 입력해주세요.")
