@@ -225,22 +225,19 @@ with tab2:
                 })
                 st.dataframe(df_res.style.format("{:.2f}").highlight_max(color="#d6eaf8"), use_container_width=True)
 
-    # [Mode B] 다중 지점 직접 입력 (Batch)
+# =========================================================
+    # [Mode B] 다중 지점 직접 입력 (Batch) - (에러 방지 강화 버전)
+    # =========================================================
     elif mode == "📋 다중 지점 직접 입력 (Batch)":
         st.info("💡 엑셀 등에서 데이터를 복사(Ctrl+C)하여 아래에 붙여넣으세요. (탭 또는 콤마로 구분)")
         
         with st.expander("📝 입력 형식 예시 (클릭하여 확인)", expanded=True):
             st.markdown("""
             **형식**: `지점명` | `각도` | `재령` | `설계강도` | `측정값 1` ... `측정값 20`
-            
-            **예시 데이터**:
-            ```text
-            P1-Top	0	1000	24	54	56	55	53	58	55	54	55	52	57	55	56	54	55	59	42	55	56	54	55
-            P1-Bot	-90	1000	24	45	46	44	48	45	46	47	44	45	46	45	44	47	48	46	45	44	45	46	47
-            ```
+            *(주의: 맨 윗줄에 '지점명, 각도...' 같은 제목행이 포함되어도 자동으로 건너뜁니다.)*
             """)
 
-        batch_input = st.text_area("데이터 붙여넣기", height=200, placeholder="여기에 데이터를 붙여넣으세요...")
+        batch_input = st.text_area("데이터 붙여넣기", height=200, placeholder="P1-Top  0  1000  24  55  56 ...")
         
         if st.button("일괄 계산 실행", type="primary", key="btn_batch"):
             if not batch_input.strip():
@@ -249,23 +246,49 @@ with tab2:
                 results = []
                 lines = batch_input.strip().split('\n')
                 
+                success_count = 0
+                error_log = []
+
                 for i, line in enumerate(lines):
-                    if not line.strip(): continue
+                    if not line.strip(): continue # 빈 줄 건너뛰기
+                    
+                    # 1. 구분자 처리 (탭 우선, 없으면 콤마, 그것도 없으면 공백)
                     if '\t' in line: parts = line.split('\t')
-                    else: parts = line.split(',')
+                    elif ',' in line: parts = line.split(',')
+                    else: parts = line.split() # 공백 기준
+                    
+                    # 공백 제거
                     parts = [p.strip() for p in parts if p.strip()]
                     
+                    # 2. 헤더(제목) 행 감지 및 건너뛰기
+                    # 숫자로 변환할 수 없는 '각도', 'Angle' 등의 문자가 2번째 항목에 있으면 헤더로 간주
+                    try:
+                        float(parts[1])
+                    except (ValueError, IndexError):
+                        # 2번째 값이 숫자가 아니면 헤더로 보고 스킵
+                        continue
+
+                    # 3. 데이터 개수 확인
                     if len(parts) < 5:
-                        st.error(f"Line {i+1}: 데이터 형식이 올바르지 않습니다.")
+                        error_log.append(f"Line {i+1}: 데이터 부족 (항목이 5개 미만)")
                         continue
                         
                     try:
+                        # 4. 데이터 파싱 (여기서 ValueError가 가장 많이 발생)
                         loc_name = parts[0]
                         angle_val = float(parts[1])
                         age_val = float(parts[2])
                         fck_val = float(parts[3])
-                        readings = [float(x) for x in parts[4:]]
                         
+                        # 측정값 파싱 (숫자가 아닌 문자가 섞여 있으면 제거)
+                        readings = []
+                        for x in parts[4:]:
+                            try:
+                                readings.append(float(x))
+                            except ValueError:
+                                pass # 단위(MPa 등)나 특수문자는 무시
+                        
+                        # 계산 수행
                         success, res = calculate_strength(readings, angle_val, age_val)
                         
                         entry = {
@@ -274,6 +297,7 @@ with tab2:
                             "상태": "성공" if success else "실패",
                             "평균추정강도(MPa)": 0.0,
                             "판정": "-",
+                            "입력값수": len(readings),
                             "비고": ""
                         }
                         
@@ -287,20 +311,41 @@ with tab2:
                             entry["판정"] = grade_mk
                             entry["보정후R0"] = round(res["R0"], 1)
                             entry["기각수"] = res["Discard"]
+                            success_count += 1
                         else:
-                            entry["비고"] = res
+                            entry["비고"] = res # 에러 메시지
                             
                         results.append(entry)
                         
                     except ValueError:
-                        st.error(f"Line {i+1}: 숫자 변환 오류.")
+                        error_log.append(f"Line {i+1}: 숫자 변환 오류 (문자가 포함됨)")
+                    except Exception as e:
+                        error_log.append(f"Line {i+1}: 알 수 없는 오류 ({str(e)})")
                 
+                # 결과 출력
+                if error_log:
+                    with st.expander("⚠️ 일부 데이터 처리 실패 (클릭하여 확인)", expanded=True):
+                        for err in error_log:
+                            st.write(err)
+                            
                 if results:
-                    st.success(f"✅ 총 {len(results)}개 지점 분석 완료")
+                    st.success(f"✅ 총 {len(lines)}줄 중 {success_count}개 지점 분석 완료")
                     df_final = pd.DataFrame(results)
-                    st.dataframe(df_final.style.format({"평균추정강도(MPa)": "{:.2f}"}).applymap(lambda v: 'color: red;' if v == '실패' or v == 'D/E' else None), use_container_width=True)
-                    st.download_button(f"📥 결과 다운로드 (CSV)", convert_df(df_final), f"{project_name}_Batch결과.csv", "text/csv")
-
+                    
+                    st.dataframe(
+                        df_final.style.format({"평균추정강도(MPa)": "{:.2f}"})
+                        .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
+                        use_container_width=True
+                    )
+                    
+                    st.download_button(
+                        f"📥 결과 다운로드 (CSV)", 
+                        convert_df(df_final), 
+                        f"{project_name}_Batch결과.csv", 
+                        "text/csv"
+                    )
+                elif not error_log:
+                    st.warning("처리할 유효한 데이터가 없습니다.")
     # [Mode C] 파일 업로드
     elif mode == "📂 파일 업로드 (Excel/CSV)":
         st.info("💡 대량의 데이터를 파일로 업로드하여 처리합니다.")
@@ -442,3 +487,4 @@ with tab3:
                     )
         except:
             st.error("숫자만 입력해주세요.")
+
