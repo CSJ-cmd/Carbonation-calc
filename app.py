@@ -232,117 +232,195 @@ with tab2:
                     use_container_width=True
                 )
 
-    # =========================================================
-    # [Mode B] 다중 지점 직접 입력 (Batch)
+# =========================================================
+    # [Mode B] 다중 지점 직접 입력 (Batch) - (Data Editor 적용)
     # =========================================================
     elif mode == "📋 다중 지점 직접 입력 (Batch)":
-        st.info("💡 엑셀 등에서 데이터를 복사(Ctrl+C)하여 아래에 붙여넣으세요. (탭 또는 콤마로 구분)")
+        st.info("💡 엑셀 데이터를 붙여넣은 후, 아래 표에서 **각도나 재령을 클릭하여 수정**할 수 있습니다.")
         
-        with st.expander("📝 입력 형식 예시 (클릭하여 확인)", expanded=True):
+        # 1. 초기 데이터 입력을 위한 텍스트 영역
+        with st.expander("📝 데이터 붙여넣기 (Excel 복사)", expanded=True):
             st.markdown("""
-            **형식**: `지점명` | `각도` | `재령` | `설계강도` | `측정값 1` ... `측정값 20`
-            *(주의: 맨 윗줄에 '지점명, 각도...' 같은 제목행이 포함되어도 자동으로 건너뜁니다.)*
+            **붙여넣기 요령**: `지점명` ... `측정값(20개)` 순서로 복사하세요.
+            (각도, 재령, 설계강도는 비워두거나 0으로 넣어도 아래 표에서 수정 가능합니다.)
             """)
+            batch_input = st.text_area(
+                "Raw Data Input", 
+                height=150, 
+                placeholder="P1-Top  0  1000  24  55  56 ... (엑셀에서 복사해서 붙여넣기)",
+                label_visibility="collapsed"
+            )
 
-        batch_input = st.text_area("데이터 붙여넣기", height=200, placeholder="P1-Top  0  1000  24  55  56 ...")
+        # 2. 텍스트 -> 데이터프레임 변환 (Pre-processing)
+        initial_data = []
+        if batch_input.strip():
+            lines = batch_input.strip().split('\n')
+            for line in lines:
+                if not line.strip(): continue
+                # 구분자 처리
+                if '\t' in line: parts = line.split('\t')
+                elif ',' in line: parts = line.split(',')
+                else: parts = line.split()
+                
+                parts = [p.strip() for p in parts if p.strip()]
+                
+                # 헤더 건너뛰기용 (숫자 체크)
+                try:
+                    # 데이터 파싱 시도 (최소한 지점명은 있다고 가정)
+                    loc_name = parts[0]
+                    
+                    # 각도/재령/강도가 텍스트에 있으면 가져오고, 없거나 오류나면 기본값 설정
+                    try: angle_val = int(float(parts[1]))
+                    except: angle_val = 0
+                    
+                    try: age_val = int(float(parts[2]))
+                    except: age_val = 1000 # 기본값
+                    
+                    try: fck_val = float(parts[3])
+                    except: fck_val = 24.0 # 기본값
+                    
+                    # 측정값만 추출 (나머지 부분)
+                    readings_str = " ".join(parts[4:])
+                    
+                    initial_data.append({
+                        "지점명": loc_name,
+                        "타격방향": angle_val,
+                        "재령(일)": age_val,
+                        "설계강도": fck_val,
+                        "측정값(20개)": readings_str,
+                        "선택": True # 계산 포함 여부 체크박스
+                    })
+                except:
+                    continue
+
+        # 데이터가 없으면 빈 템플릿 표시
+        if not initial_data:
+            df_input = pd.DataFrame(columns=["선택", "지점명", "타격방향", "재령(일)", "설계강도", "측정값(20개)"])
+        else:
+            df_input = pd.DataFrame(initial_data)
+
+        st.divider()
+        st.markdown("#### 🛠️ 데이터 편집 및 설정 (개별 선택 가능)")
         
-        if st.button("일괄 계산 실행", type="primary", key="btn_batch"):
-            if not batch_input.strip():
-                st.warning("데이터를 입력해주세요.")
+        # 3. Data Editor (핵심 기능: 여기서 수정 가능)
+        edited_df = st.data_editor(
+            df_input,
+            column_config={
+                "선택": st.column_config.CheckboxColumn(
+                    "계산",
+                    help="체크 해제 시 계산에서 제외됩니다.",
+                    default=True,
+                    width="small"
+                ),
+                "지점명": st.column_config.TextColumn("지점명", width="medium"),
+                "타격방향": st.column_config.SelectboxColumn(
+                    "타격방향(°)",
+                    options=[-90, -45, 0, 45, 90], # 드롭다운 선택 가능!
+                    help="0:수평, -90:하향, 90:상향",
+                    width="small",
+                    required=True
+                ),
+                "재령(일)": st.column_config.NumberColumn(
+                    "재령(일)",
+                    min_value=10, max_value=10000, step=10,
+                    width="small"
+                ),
+                "설계강도": st.column_config.NumberColumn(
+                    "설계강도(MPa)",
+                    min_value=15.0, max_value=100.0, step=1.0, format="%.1f",
+                    width="small"
+                ),
+                "측정값(20개)": st.column_config.TextColumn(
+                    "측정값 (공백 구분)",
+                    width="large",
+                    help="20개의 반발경도 값을 공백으로 구분하여 입력하세요."
+                )
+            },
+            hide_index=True,
+            num_rows="dynamic", # 행 추가/삭제 가능
+            use_container_width=True
+        )
+
+        # 4. 계산 실행 버튼
+        if st.button("🚀 위 설정대로 일괄 계산 실행", type="primary", key="btn_batch_edit"):
+            if edited_df.empty:
+                st.warning("데이터가 없습니다.")
             else:
                 results = []
-                lines = batch_input.strip().split('\n')
-                
                 success_count = 0
-                error_log = []
-
-                for i, line in enumerate(lines):
-                    if not line.strip(): continue # 빈 줄 건너뛰기
-                    
-                    # 1. 구분자 처리
-                    if '\t' in line: parts = line.split('\t')
-                    elif ',' in line: parts = line.split(',')
-                    else: parts = line.split() 
-                    
-                    parts = [p.strip() for p in parts if p.strip()]
-                    
-                    # 2. 헤더 감지
-                    try:
-                        float(parts[1])
-                    except (ValueError, IndexError):
-                        continue
-
-                    # 3. 데이터 개수 확인
-                    if len(parts) < 5:
-                        error_log.append(f"Line {i+1}: 데이터 부족 (항목 5개 미만)")
-                        continue
-                        
-                    try:
-                        loc_name = parts[0]
-                        angle_val = float(parts[1])
-                        age_val = float(parts[2])
-                        fck_val = float(parts[3])
-                        
-                        readings = []
-                        for x in parts[4:]:
-                            try: readings.append(float(x))
-                            except ValueError: pass
-                        
-                        success, res = calculate_strength(readings, angle_val, age_val)
-                        
-                        entry = {
-                            "지점명": loc_name,
-                            "설계강도": fck_val,
-                            "상태": "성공" if success else "실패",
-                            "평균추정강도(MPa)": 0.0,
-                            "판정": "-",
-                            "입력값수": len(readings),
-                            "비고": ""
-                        }
-                        
-                        if success:
-                            s_mean = res["Mean_Strength"]
-                            ratio = (s_mean / fck_val) * 100
-                            grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
-                            
-                            entry["평균추정강도(MPa)"] = round(s_mean, 2)
-                            entry["설계비(%)"] = round(ratio, 1)
-                            entry["판정"] = grade_mk
-                            entry["보정후R0"] = round(res["R0"], 1)
-                            entry["기각수"] = res["Discard"]
-                            success_count += 1
-                        else:
-                            entry["비고"] = res
-                            
-                        results.append(entry)
-                        
-                    except ValueError:
-                        error_log.append(f"Line {i+1}: 숫자 변환 오류")
-                    except Exception as e:
-                        error_log.append(f"Line {i+1}: 오류 ({str(e)})")
                 
-                if error_log:
-                    with st.expander("⚠️ 일부 데이터 처리 실패", expanded=True):
-                        for err in error_log: st.write(err)
-                            
+                # 진행률 표시
+                progress_bar = st.progress(0)
+                total_rows = len(edited_df)
+
+                for idx, row in edited_df.iterrows():
+                    # 체크박스 해제된 행은 건너뜀
+                    if not row["선택"]: 
+                        progress_bar.progress((idx + 1) / total_rows)
+                        continue
+
+                    # 측정값 파싱
+                    raw_str = str(row["측정값(20개)"]).replace(',', ' ')
+                    try:
+                        readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
+                    except:
+                        readings = []
+
+                    # 계산 함수 호출
+                    success, res = calculate_strength(readings, row["타격방향"], row["재령(일)"])
+                    
+                    entry = {
+                        "지점명": row["지점명"],
+                        "타격방향": row["타격방향"], # 확인용
+                        "설계강도": row["설계강도"],
+                        "상태": "성공" if success else "실패",
+                        "평균추정강도(MPa)": 0.0,
+                        "판정": "-",
+                        "비고": ""
+                    }
+                    
+                    if success:
+                        s_mean = res["Mean_Strength"]
+                        design_fck = row["설계강도"]
+                        if design_fck > 0:
+                            ratio = (s_mean / design_fck) * 100
+                            grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
+                        else:
+                            ratio = 0
+                            grade_mk = "-"
+                        
+                        entry["평균추정강도(MPa)"] = round(s_mean, 2)
+                        entry["설계비(%)"] = round(ratio, 1)
+                        entry["판정"] = grade_mk
+                        entry["보정후R0"] = round(res["R0"], 1)
+                        success_count += 1
+                    else:
+                        entry["비고"] = res
+                        
+                    results.append(entry)
+                    progress_bar.progress((idx + 1) / total_rows)
+                
+                # 결과 출력
                 if results:
-                    st.success(f"✅ 총 {len(lines)}줄 중 {success_count}개 지점 분석 완료")
+                    st.success(f"✅ 선택된 {success_count}개 지점 분석 완료")
                     df_final = pd.DataFrame(results)
                     
+                    # 결과 테이블 (스타일링)
                     st.dataframe(
-                        df_final.style.format({"평균추정강도(MPa)": "{:.2f}"})
+                        df_final.style.format({"평균추정강도(MPa)": "{:.2f}", "설계비(%)": "{:.1f}"})
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
                         use_container_width=True
                     )
                     
+                    # 다운로드 버튼
                     st.download_button(
                         f"📥 결과 다운로드 (CSV)", 
                         convert_df(df_final), 
-                        f"{project_name}_Batch결과.csv", 
+                        f"{project_name}_Batch_Result.csv", 
                         "text/csv"
                     )
-                elif not error_log:
-                    st.warning("유효한 데이터가 없습니다.")
+                else:
+                    st.warning("계산할 유효한 데이터가 없습니다. (데이터를 입력하거나 '선택' 체크박스를 확인하세요)")
 
     # [Mode C] 파일 업로드
     elif mode == "📂 파일 업로드 (Excel/CSV)":
@@ -512,3 +590,4 @@ with tab3:
                     )
         except:
             st.error("숫자만 입력해주세요.")
+
