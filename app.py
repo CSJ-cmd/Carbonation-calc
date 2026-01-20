@@ -3,7 +3,7 @@ import math
 import pandas as pd
 import numpy as np
 import io
-import altair as alt  # 차트 커스텀을 위해 추가
+import altair as alt
 
 # =========================================================
 # 1. 페이지 기본 설정 및 스타일
@@ -224,10 +224,16 @@ with tab2:
                     "공식": ["일본건축", "일본재료", "과기부", "권영웅", "KALIS"],
                     "강도(MPa)": res["Est_Strengths"]
                 })
-                st.dataframe(df_res.style.format("{:.2f}").highlight_max(color="#d6eaf8"), use_container_width=True)
+                
+                # [수정] 딕셔너리 포맷팅 적용
+                st.dataframe(
+                    df_res.style.format({"강도(MPa)": "{:.2f}"})
+                    .highlight_max(subset=["강도(MPa)"], color="#d6eaf8"),
+                    use_container_width=True
+                )
 
     # =========================================================
-    # [Mode B] 다중 지점 직접 입력 (Batch) - (에러 방지 강화 버전)
+    # [Mode B] 다중 지점 직접 입력 (Batch)
     # =========================================================
     elif mode == "📋 다중 지점 직접 입력 (Batch)":
         st.info("💡 엑셀 등에서 데이터를 복사(Ctrl+C)하여 아래에 붙여넣으세요. (탭 또는 콤마로 구분)")
@@ -456,7 +462,7 @@ with tab3:
                         "강도": sorted(data_s)
                     })
                     
-                    # 1. 막대 그래프 (미달 데이터는 붉은색)
+                    # 1. 막대 그래프
                     bars = alt.Chart(chart_df).mark_bar().encode(
                         x=alt.X('순번:O', title='데이터 순번 (오름차순)'),
                         y=alt.Y('강도:Q', title='압축강도 (MPa)'),
@@ -499,7 +505,7 @@ with tab3:
                     st.subheader("📋 데이터 목록")
                     df_list = pd.DataFrame(data_s, columns=["강도(MPa)"])
                     st.dataframe(
-                        df_list.style.format("{:.2f}")
+                        df_list.style.format({"강도(MPa)": "{:.2f}"})
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v < design_fck_stats else None),
                         use_container_width=True,
                         height=400
