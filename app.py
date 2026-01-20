@@ -3,6 +3,7 @@ import math
 import pandas as pd
 import numpy as np
 import io
+import altair as alt  # 차트 커스텀을 위해 추가
 
 # =========================================================
 # 1. 페이지 기본 설정 및 스타일
@@ -225,7 +226,7 @@ with tab2:
                 })
                 st.dataframe(df_res.style.format("{:.2f}").highlight_max(color="#d6eaf8"), use_container_width=True)
 
-# =========================================================
+    # =========================================================
     # [Mode B] 다중 지점 직접 입력 (Batch) - (에러 방지 강화 버전)
     # =========================================================
     elif mode == "📋 다중 지점 직접 입력 (Batch)":
@@ -252,43 +253,35 @@ with tab2:
                 for i, line in enumerate(lines):
                     if not line.strip(): continue # 빈 줄 건너뛰기
                     
-                    # 1. 구분자 처리 (탭 우선, 없으면 콤마, 그것도 없으면 공백)
+                    # 1. 구분자 처리
                     if '\t' in line: parts = line.split('\t')
                     elif ',' in line: parts = line.split(',')
-                    else: parts = line.split() # 공백 기준
+                    else: parts = line.split() 
                     
-                    # 공백 제거
                     parts = [p.strip() for p in parts if p.strip()]
                     
-                    # 2. 헤더(제목) 행 감지 및 건너뛰기
-                    # 숫자로 변환할 수 없는 '각도', 'Angle' 등의 문자가 2번째 항목에 있으면 헤더로 간주
+                    # 2. 헤더 감지
                     try:
                         float(parts[1])
                     except (ValueError, IndexError):
-                        # 2번째 값이 숫자가 아니면 헤더로 보고 스킵
                         continue
 
                     # 3. 데이터 개수 확인
                     if len(parts) < 5:
-                        error_log.append(f"Line {i+1}: 데이터 부족 (항목이 5개 미만)")
+                        error_log.append(f"Line {i+1}: 데이터 부족 (항목 5개 미만)")
                         continue
                         
                     try:
-                        # 4. 데이터 파싱 (여기서 ValueError가 가장 많이 발생)
                         loc_name = parts[0]
                         angle_val = float(parts[1])
                         age_val = float(parts[2])
                         fck_val = float(parts[3])
                         
-                        # 측정값 파싱 (숫자가 아닌 문자가 섞여 있으면 제거)
                         readings = []
                         for x in parts[4:]:
-                            try:
-                                readings.append(float(x))
-                            except ValueError:
-                                pass # 단위(MPa 등)나 특수문자는 무시
+                            try: readings.append(float(x))
+                            except ValueError: pass
                         
-                        # 계산 수행
                         success, res = calculate_strength(readings, angle_val, age_val)
                         
                         entry = {
@@ -313,20 +306,18 @@ with tab2:
                             entry["기각수"] = res["Discard"]
                             success_count += 1
                         else:
-                            entry["비고"] = res # 에러 메시지
+                            entry["비고"] = res
                             
                         results.append(entry)
                         
                     except ValueError:
-                        error_log.append(f"Line {i+1}: 숫자 변환 오류 (문자가 포함됨)")
+                        error_log.append(f"Line {i+1}: 숫자 변환 오류")
                     except Exception as e:
-                        error_log.append(f"Line {i+1}: 알 수 없는 오류 ({str(e)})")
+                        error_log.append(f"Line {i+1}: 오류 ({str(e)})")
                 
-                # 결과 출력
                 if error_log:
-                    with st.expander("⚠️ 일부 데이터 처리 실패 (클릭하여 확인)", expanded=True):
-                        for err in error_log:
-                            st.write(err)
+                    with st.expander("⚠️ 일부 데이터 처리 실패", expanded=True):
+                        for err in error_log: st.write(err)
                             
                 if results:
                     st.success(f"✅ 총 {len(lines)}줄 중 {success_count}개 지점 분석 완료")
@@ -345,7 +336,8 @@ with tab2:
                         "text/csv"
                     )
                 elif not error_log:
-                    st.warning("처리할 유효한 데이터가 없습니다.")
+                    st.warning("유효한 데이터가 없습니다.")
+
     # [Mode C] 파일 업로드
     elif mode == "📂 파일 업로드 (Excel/CSV)":
         st.info("💡 대량의 데이터를 파일로 업로드하여 처리합니다.")
@@ -404,17 +396,16 @@ with tab2:
                 st.error(f"오류 발생: {e}")
 
 # ---------------------------------------------------------
-# [Tab 3] 강도 통계 및 비교 (설계강도 입력 추가)
+# [Tab 3] 강도 통계 및 비교 (설계강도 기준선 추가)
 # ---------------------------------------------------------
 with tab3:
     st.header("📈 강도 통계 및 안전성 평가")
     st.markdown("##### 📝 산정된 강도 값들을 입력하여 통계를 확인하고 **설계강도**와 비교하세요.")
     
     with st.container():
-        # [NEW] 설계강도 입력란 추가 (화면 분할)
         c1, c2 = st.columns([1, 2])
         with c1:
-            design_fck_stats = st.number_input("설계기준강도 (MPa)", min_value=15.0, max_value=100.0, value=24.0, step=1.0, key="fck_stats", help="비교 기준이 될 설계 강도를 입력하세요.")
+            design_fck_stats = st.number_input("설계기준강도 (MPa)", min_value=15.0, max_value=100.0, value=24.0, step=1.0, key="fck_stats")
         with c2:
             input_stats = st.text_area("강도 데이터 입력 (MPa)", placeholder="예: 21.5 22.1 23.0 24.5 ... (공백/줄바꿈 구분)", height=100)
         
@@ -424,19 +415,15 @@ with tab3:
             if len(data_s) < 2:
                 st.warning("데이터가 2개 이상 필요합니다.")
             else:
-                # 통계 계산
                 st_mean = np.mean(data_s)
                 st_std = np.std(data_s, ddof=1)
                 st_cov = (st_std / st_mean * 100) if st_mean > 0 else 0
                 st_max = np.max(data_s)
                 st_min = np.min(data_s)
                 
-                # [NEW] 설계강도 대비 비교
                 ratio = (st_mean / design_fck_stats) * 100
                 grade_mk = "A (우수)" if ratio >= 100 else ("B (양호)" if ratio >= 90 else ("C (미흡)" if ratio >= 75 else "D/E (부족)"))
-                grade_color = "green" if ratio >= 100 else ("blue" if ratio >= 90 else ("orange" if ratio >= 75 else "red"))
-
-                # 1. 결과 요약 (메트릭)
+                
                 st.divider()
                 st.success(f"✅ 총 {len(data_s)}개 데이터 분석 완료")
                 
@@ -446,7 +433,6 @@ with tab3:
                 col3.metric("강도비 (평균/설계)", f"{ratio:.1f} %", delta=f"{ratio-100:.1f}%")
                 col4.metric("종합 판정", grade_mk)
                 
-                # 2. 통계 지표
                 st.markdown("---")
                 st.subheader("📊 상세 통계 지표")
                 k1, k2, k3, k4 = st.columns(4)
@@ -455,26 +441,59 @@ with tab3:
                 k3.metric("표준편차 (SD)", f"{st_std:.2f}")
                 k4.metric("변동계수 (COV)", f"{st_cov:.1f} %")
                 
-                # 3. 시각화 (설계강도 라인 포함)
                 st.markdown("---")
+                
+                # =================================================
+                # [Altair Chart] 시각화 (기준선 추가)
+                # =================================================
                 v1, v2 = st.columns([2, 1])
                 with v1:
                     st.subheader("📉 데이터 분포 및 기준선")
-                    chart_data = pd.DataFrame({
-                        "강도": sorted(data_s),
-                        "순번": range(1, len(data_s)+1)
+                    
+                    # 데이터프레임 생성
+                    chart_df = pd.DataFrame({
+                        "순번": range(1, len(data_s)+1),
+                        "강도": sorted(data_s)
                     })
                     
-                    # Altair를 쓰지 않고 내장 차트로 간단히 구현 (설계강도는 텍스트로 표현)
-                    st.bar_chart(chart_data.set_index("순번"))
-                    st.caption(f"👆 붉은 점선(마음의 눈으로 보세요): 설계강도 {design_fck_stats} MPa")
+                    # 1. 막대 그래프 (미달 데이터는 붉은색)
+                    bars = alt.Chart(chart_df).mark_bar().encode(
+                        x=alt.X('순번:O', title='데이터 순번 (오름차순)'),
+                        y=alt.Y('강도:Q', title='압축강도 (MPa)'),
+                        color=alt.condition(
+                            alt.datum.강도 < design_fck_stats,
+                            alt.value('#FF6B6B'),  # 미달 (빨강)
+                            alt.value('#4D96FF')   # 정상 (파랑)
+                        ),
+                        tooltip=['순번', '강도']
+                    )
                     
-                    # 설계강도보다 낮은 데이터 개수 확인
+                    # 2. 기준선 (설계강도, 빨간 실선)
+                    rule = alt.Chart(pd.DataFrame({'y': [design_fck_stats]})).mark_rule(
+                        color='red', strokeWidth=2, strokeDash=[4, 2]
+                    ).encode(
+                        y='y'
+                    )
+                    
+                    # 3. 기준선 라벨 (텍스트)
+                    text = alt.Chart(pd.DataFrame({
+                        'y': [design_fck_stats], 
+                        'label': [f'설계강도 {design_fck_stats}MPa']
+                    })).mark_text(
+                        align='left', baseline='bottom', dx=5, color='red', fontWeight='bold'
+                    ).encode(
+                        y='y', text='label'
+                    )
+                    
+                    # 차트 합치기
+                    st.altair_chart(bars + rule + text, use_container_width=True)
+                    
+                    # 미달 데이터 개수 확인
                     fail_cnt = sum(1 for x in data_s if x < design_fck_stats)
                     if fail_cnt > 0:
-                        st.warning(f"⚠️ 설계강도({design_fck_stats} MPa) 미달 데이터: {fail_cnt}개 발견됨")
+                        st.warning(f"⚠️ 설계강도({design_fck_stats} MPa) 미달 데이터가 {fail_cnt}개 있습니다.")
                     else:
-                        st.success("✅ 모든 데이터가 설계강도를 상회합니다.")
+                        st.success("✅ 모든 데이터가 설계강도 이상입니다.")
 
                 with v2:
                     st.subheader("📋 데이터 목록")
@@ -483,8 +502,7 @@ with tab3:
                         df_list.style.format("{:.2f}")
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v < design_fck_stats else None),
                         use_container_width=True,
-                        height=300
+                        height=400
                     )
         except:
             st.error("숫자만 입력해주세요.")
-
