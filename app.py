@@ -1,6 +1,7 @@
 import streamlit as st
 import math
 import pandas as pd
+import numpy as np
 
 # =========================================================
 # 1. 페이지 기본 설정
@@ -66,12 +67,13 @@ def get_age_coefficient(days):
 st.title("🏗️ 구조물 안전진단 통합 평가")
 st.markdown("정밀안전진단 기준에 따른 **탄산화** 및 **반발경도** 평가 도구입니다.")
 
-tab1, tab2 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가"])
+# 메인 탭 구성
+main_tab1, main_tab2 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가"])
 
 # =========================================================
-# [Tab 1] 탄산화 평가 (개선: 경고 메시지 강화)
+# [Tab 1] 탄산화 평가
 # =========================================================
-with tab1:
+with main_tab1:
     st.header("🧪 탄산화 깊이 및 등급 평가")
     with st.container():
         st.info("👇 측정 데이터를 입력하세요.")
@@ -107,7 +109,6 @@ with tab1:
         else:
              life_msg = "계산 불가"
 
-        # 등급 판정
         if remaining_depth >= 30:
             grade = "A 등급"; color = "green"; desc = "매우 양호 (30mm 이상 여유)"
         elif remaining_depth >= 10:
@@ -139,9 +140,9 @@ with tab1:
         st.dataframe(df_res, use_container_width=True, hide_index=True)
 
 # =========================================================
-# [Tab 2] 반발경도 평가 (개선: KS 기준 기각 로직 추가)
+# [Tab 2] 반발경도 평가 (서브 탭 적용)
 # =========================================================
-with tab2:
+with main_tab2:
     st.header("🔨 반발경도(슈미트해머) 강도 산정")
     st.markdown("##### 📝 측정값 20개를 입력하세요 (KS F 2730)")
 
@@ -167,20 +168,19 @@ with tab2:
             clean_text = input_text.replace(',', ' ').replace('\n', ' ')
             readings = [float(x) for x in clean_text.split() if x.strip()]
             
-            # 1. 데이터 개수 확인
+            # 1. 데이터 검증
             if len(readings) < 20:
                 st.warning(f"⚠️ 현재 데이터가 {len(readings)}개입니다. (KS 기준은 보통 20점 타격)")
             
             if len(readings) < 5:
                 st.error("❗ 데이터가 너무 적습니다. 최소 5개 이상 입력해주세요.")
             else:
-                # 2. 이상치 제거 (±20% Rule)
+                # 2. 이상치 제거 및 R0 계산
                 avg1 = sum(readings) / len(readings)
                 lower, upper = avg1 * 0.8, avg1 * 1.2
                 valid = [r for r in readings if lower <= r <= upper]
                 discard_count = len(readings) - len(valid)
                 
-                # [개선] 기각된 데이터가 20% 초과(4개 이상)인 경우 경고
                 is_invalid_test = False
                 if len(readings) >= 20 and discard_count > 4:
                     is_invalid_test = True
@@ -190,20 +190,28 @@ with tab2:
                 elif is_invalid_test:
                     st.error(f"❌ **시험 무효 (재측정 필요)**: {discard_count}개의 데이터가 기각되었습니다.\n(KS F 2730 기준: 기각 데이터가 20%를 초과하면 전체 무효)")
                 else:
-                    # R0 계산
                     R_final = sum(valid) / len(valid)
                     angle_corr = get_angle_correction(R_final, angle_option)
                     R0 = R_final + angle_corr 
                     age_coeff = get_age_coefficient(days_input)
                     
                     # 3. 강도 산정
-                    f_aij = (7.3 * R0 + 100) * 0.098 * age_coeff       
-                    f_jsms = (1.27 * R0 - 18.0) * age_coeff            
-                    f_mst = (15.2 * R0 - 112.8) * 0.098 * age_coeff    
-                    f_kwon = (2.304 * R0 - 38.80) * age_coeff          
+                    f_aij = (7.3 * R0 + 100) * 0.098 * age_coeff        
+                    f_jsms = (1.27 * R0 - 18.0) * age_coeff             
+                    f_mst = (15.2 * R0 - 112.8) * 0.098 * age_coeff     
+                    f_kwon = (2.304 * R0 - 38.80) * age_coeff           
                     f_kalis = (1.3343 * R0 + 8.1977) * age_coeff 
+
+                    est_strengths = [max(0, x) for x in [f_aij, f_jsms, f_mst, f_kwon, f_kalis]]
                     
-                    # 4. 결과 표시
+                    # 4. 통계 산출
+                    s_mean = np.mean(est_strengths)
+                    s_std = np.std(est_strengths, ddof=1)
+                    s_max = np.max(est_strengths)
+                    s_min = np.min(est_strengths)
+                    s_cov = (s_std / s_mean * 100) if s_mean > 0 else 0
+                    
+                    # === [공통 결과 영역] ===
                     st.divider()
                     st.success("✅ 산정 완료")
                     
@@ -218,46 +226,68 @@ with tab2:
 
                     st.markdown("---")
 
-                    st.subheader("📊 압축강도 산정 결과")
-                    result_data = {
-                        "구분": [
-                            "일본건축학회 (일반)", 
-                            "일본재료학회 (일반)", 
-                            "과학기술부 (고강도)", 
-                            "권영웅 (고강도)",
-                            "KALIS (고강도, 40MPa↑)"
-                        ],
-                        "추정 강도 (MPa)": [
-                            max(0, f_aij),
-                            max(0, f_jsms),
-                            max(0, f_mst),
-                            max(0, f_kwon),
-                            max(0, f_kalis)
-                        ],
-                        "적용 수식": [
-                            "(7.3×Ro + 100) × 0.098", 
-                            "1.27×Ro - 18.0", 
-                            "(15.2×Ro - 112.8) × 0.098", 
-                            "2.304×Ro - 38.80",
-                            "1.3343×Ro + 8.1977"
-                        ]
-                    }
+                    # === [결과 서브 탭 분리] ===
+                    res_tab1, res_tab2 = st.tabs(["📊 추정 강도 산정표", "📈 통계 및 상세 분석"])
                     
-                    # 데이터프레임 생성 및 스타일링
-                    df_result = pd.DataFrame(result_data)
-                    
-                    # 소수점 포맷팅 및 하이라이트 (가장 높은 강도)
-                    st.dataframe(
-                        df_result.style.format({"추정 강도 (MPa)": "{:.2f}"})
-                        .highlight_max(subset=["추정 강도 (MPa)"], color="#d6eaf8", axis=0),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                    
-                    with st.expander("ℹ️ 상세 분석 정보"):
-                        st.write(f"- 전체 입력: {len(readings)}개")
-                        st.write(f"- 유효 데이터: {len(valid)}개")
-                        st.write(f"- 기각된 데이터: {[r for r in readings if r not in valid]}")
+                    # [Sub Tab 1] 산정 결과 표
+                    with res_tab1:
+                        st.subheader("📊 압축강도 추정 결과")
+                        result_data = {
+                            "구분": [
+                                "일본건축학회 (일반)", 
+                                "일본재료학회 (일반)", 
+                                "과학기술부 (고강도)", 
+                                "권영웅 (고강도)",
+                                "KALIS (고강도, 40MPa↑)"
+                            ],
+                            "추정 강도 (MPa)": est_strengths,
+                            "적용 수식": [
+                                "(7.3×Ro + 100) × 0.098", 
+                                "1.27×Ro - 18.0", 
+                                "(15.2×Ro - 112.8) × 0.098", 
+                                "2.304×Ro - 38.80",
+                                "1.3343×Ro + 8.1977"
+                            ]
+                        }
+                        df_result = pd.DataFrame(result_data)
+                        st.dataframe(
+                            df_result.style.format({"추정 강도 (MPa)": "{:.2f}"})
+                            .highlight_max(subset=["추정 강도 (MPa)"], color="#d6eaf8", axis=0),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+                    # [Sub Tab 2] 통계 및 Raw Data
+                    with res_tab2:
+                        st.subheader("📈 통계 분석 (5개 제안식 결과)")
+                        st.info("💡 5가지 추정식으로 계산된 결과값들의 분포입니다.")
+                        
+                        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+                        sc1.metric("평균 (Mean)", f"{s_mean:.2f} MPa")
+                        sc2.metric("최대 (Max)", f"{s_max:.2f} MPa")
+                        sc3.metric("최소 (Min)", f"{s_min:.2f} MPa")
+                        sc4.metric("표준편차 (SD)", f"{s_std:.2f}")
+                        sc5.metric("변동계수 (COV)", f"{s_cov:.1f} %")
+
+                        st.divider()
+                        
+                        st.markdown("##### 📝 입력 데이터(Raw) 상세 통계")
+                        with st.expander("데이터 상세 보기", expanded=True):
+                            st.write(f"- 전체 입력 개수: **{len(readings)}개**")
+                            st.write(f"- 유효 데이터(n): **{len(valid)}개**")
+                            st.write(f"- 기각된 데이터: `{discard_count}개` {[r for r in readings if r not in valid]}")
+                            
+                            if valid:
+                                raw_mean = np.mean(valid)
+                                raw_std = np.std(valid, ddof=1)
+                                raw_cov = (raw_std/raw_mean*100) if raw_mean > 0 else 0
+                                st.markdown(f"""
+                                **[유효 반발경도(R) 통계]**
+                                - 평균: `{raw_mean:.1f}`
+                                - 표준편차: `{raw_std:.2f}`
+                                - 변동계수: `{raw_cov:.1f}%`
+                                - Range: `{min(valid)}` ~ `{max(valid)}`
+                                """)
 
         except ValueError:
             st.error("⚠️ 숫자만 입력해주세요.")
