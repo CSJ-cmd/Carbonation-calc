@@ -226,5 +226,118 @@ with main_tab2:
                                 "1.3343×Ro + 8.1977"
                             ]
                         }
-                        df_result = pd.DataFrame
+                        df_result = pd.DataFrame(result_data)
+                        st.dataframe(
+                            df_result.style.format({"추정 강도 (MPa)": "{:.2f}"})
+                            .highlight_max(subset=["추정 강도 (MPa)"], color="#d6eaf8", axis=0),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        st.markdown("---")
+                        st.caption("ℹ️ 산정 기초 데이터 (반발경도)")
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("1차 평균 R", f"{R_final:.1f}")
+                        c2.metric("타격 보정", f"{angle_corr:+.1f}")
+                        c3.metric("최종 R0", f"{R0:.1f}")
+                        c4.metric("재령 계수", f"{age_coeff:.3f}")
+                        if discard_count > 0:
+                            st.warning(f"⚠️ 이상치 {discard_count}개가 제외되었습니다.")
 
+                    # [Sub Tab 2] 강도 통계 분석 (5가지 강도값 기준)
+                    with res_tab2:
+                        st.subheader("📈 산정된 압축강도 통계")
+                        st.info("💡 위 5가지 제안식으로 계산된 **압축강도 값들의 분포 특성**입니다.")
+                        
+                        s_mean = np.mean(est_strengths)
+                        s_std = np.std(est_strengths, ddof=1)
+                        s_max = np.max(est_strengths)
+                        s_min = np.min(est_strengths)
+                        s_cov = (s_std / s_mean * 100) if s_mean > 0 else 0
+                        
+                        col_s1, col_s2, col_s3 = st.columns(3)
+                        col_s1.metric("평균 강도", f"{s_mean:.2f} MPa")
+                        col_s2.metric("최대 강도", f"{s_max:.2f} MPa")
+                        col_s3.metric("최소 강도", f"{s_min:.2f} MPa")
+                        
+                        col_s4, col_s5, col_s6 = st.columns(3)
+                        col_s4.metric("표준편차", f"{s_std:.2f}")
+                        col_s5.metric("변동계수 (COV)", f"{s_cov:.1f} %")
+                        col_s6.metric("데이터 수", "5 개 (공식 수)")
+                        
+                        st.markdown("---")
+                        with st.expander("📊 분포 시각화 (간이 차트)"):
+                            chart_data = pd.DataFrame({
+                                "공식": df_result["구분"],
+                                "강도": est_strengths
+                            }).set_index("공식")
+                            st.bar_chart(chart_data)
+
+        except ValueError:
+            st.error("⚠️ 숫자만 입력해주세요.")
+
+# =========================================================
+# [Tab 3] 강도 통계 분석 (직접 입력) - 신규 추가
+# =========================================================
+with main_tab3:
+    st.header("📈 압축강도 데이터 통계 분석")
+    st.markdown("##### 📝 이미 산정된 압축강도 값들을 입력하여 통계를 확인하세요.")
+    
+    with st.container():
+        input_strength_text = st.text_area(
+            "압축강도 데이터 입력 (MPa)",
+            placeholder="예: 24.5 25.1 23.8 26.0 ... (공백 또는 줄바꿈으로 구분)",
+            height=100,
+            key="input_strength"
+        )
+        
+    if st.button("📊 통계 분석 실행", type="primary", key="btn_stat"):
+        if not input_strength_text.strip():
+            st.warning("⚠️ 데이터를 입력해주세요.")
+        else:
+            try:
+                # 데이터 파싱
+                clean_str = input_strength_text.replace(',', ' ').replace('\n', ' ')
+                data_list = [float(x) for x in clean_str.split() if x.strip()]
+                
+                if len(data_list) < 2:
+                    st.error("❗ 통계 분석을 위해 최소 2개 이상의 데이터가 필요합니다.")
+                else:
+                    # 통계 계산
+                    stat_mean = np.mean(data_list)
+                    stat_std = np.std(data_list, ddof=1) # 표본표준편차
+                    stat_max = np.max(data_list)
+                    stat_min = np.min(data_list)
+                    stat_cov = (stat_std / stat_mean * 100) if stat_mean > 0 else 0
+                    
+                    st.divider()
+                    st.success(f"✅ 총 {len(data_list)}개의 데이터 분석 완료")
+                    
+                    # 메트릭 표시
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("평균 (Mean)", f"{stat_mean:.2f} MPa")
+                    c2.metric("최대 (Max)", f"{stat_max:.2f} MPa")
+                    c3.metric("최소 (Min)", f"{stat_min:.2f} MPa")
+                    c4.metric("표준편차 (SD)", f"{stat_std:.2f}")
+                    c5.metric("변동계수 (COV)", f"{stat_cov:.1f} %")
+                    
+                    st.markdown("---")
+                    
+                    # 시각화 및 데이터 표
+                    col_viz1, col_viz2 = st.columns([2, 1])
+                    
+                    with col_viz1:
+                        st.subheader("📊 데이터 분포 (히스토그램)")
+                        # 간단한 히스토그램 역할을 하는 바 차트 (구간별 빈도 대신 값 자체 표시 or 정렬)
+                        # 여기서는 값의 크기 비교를 위해 정렬 후 Bar Chart 표시
+                        sorted_data = sorted(data_list)
+                        st.bar_chart(pd.DataFrame({"압축강도": sorted_data}), use_container_width=True)
+                        st.caption("*X축: 데이터 순번 (오름차순 정렬), Y축: 압축강도(MPa)")
+
+                    with col_viz2:
+                        st.subheader("📋 입력 데이터 목록")
+                        df_input = pd.DataFrame(data_list, columns=["압축강도(MPa)"])
+                        st.dataframe(df_input.style.format("{:.2f}"), use_container_width=True, height=300)
+
+            except ValueError:
+                st.error("⚠️ 숫자만 입력해주세요 (문자 포함 불가).")
