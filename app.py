@@ -65,10 +65,10 @@ def get_age_coefficient(days):
 # =========================================================
 
 st.title("🏗️ 구조물 안전진단 통합 평가")
-st.markdown("정밀안전진단 기준에 따른 **탄산화** 및 **반발경도** 평가 도구입니다.")
+st.markdown("정밀안전진단 기준에 따른 **탄산화**, **반발경도**, **강도 통계** 분석 도구입니다.")
 
-# 메인 탭
-main_tab1, main_tab2 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가"])
+# 탭을 3개로 확장
+main_tab1, main_tab2, main_tab3 = st.tabs(["🧪 1. 탄산화 평가", "🔨 2. 반발경도 평가", "📈 3. 강도 통계 분석 (직접 입력)"])
 
 # =========================================================
 # [Tab 1] 탄산화 평가
@@ -168,7 +168,7 @@ with main_tab2:
             clean_text = input_text.replace(',', ' ').replace('\n', ' ')
             readings = [float(x) for x in clean_text.split() if x.strip()]
             
-            # 1. 데이터 검증 및 R값 계산
+            # 1. 데이터 검증
             if len(readings) < 5:
                 st.error("❗ 데이터가 너무 적습니다. 최소 5개 이상 입력해주세요.")
             else:
@@ -198,18 +198,17 @@ with main_tab2:
 
                     est_strengths = [max(0, x) for x in [f_aij, f_jsms, f_mst, f_kwon, f_kalis]]
                     
-                    # 3. 결과 표시 영역
+                    # 3. 결과 표시
                     st.divider()
                     st.success("✅ 산정 완료")
                     
-                    # 결과 탭 분리
+                    # 탭 분리
                     res_tab1, res_tab2 = st.tabs(["📊 1. 강도 추정 결과", "📈 2. 강도 통계 분석"])
                     
-                    # [Sub Tab 1] 강도 추정 결과 (테이블 + R값 정보)
+                    # [Sub Tab 1] 강도 추정 결과
                     with res_tab1:
                         st.subheader("📋 압축강도 추정값 목록")
                         
-                        # 계산된 5가지 강도 데이터프레임
                         result_data = {
                             "구분": [
                                 "일본건축학회 (일반)", 
@@ -227,54 +226,5 @@ with main_tab2:
                                 "1.3343×Ro + 8.1977"
                             ]
                         }
-                        df_result = pd.DataFrame(result_data)
-                        st.dataframe(
-                            df_result.style.format({"추정 강도 (MPa)": "{:.2f}"})
-                            .highlight_max(subset=["추정 강도 (MPa)"], color="#d6eaf8", axis=0),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        st.markdown("---")
-                        st.caption("ℹ️ 산정 기초 데이터 (반발경도)")
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("1차 평균 R", f"{R_final:.1f}")
-                        c2.metric("타격 보정", f"{angle_corr:+.1f}")
-                        c3.metric("최종 R0", f"{R0:.1f}")
-                        c4.metric("재령 계수", f"{age_coeff:.3f}")
-                        if discard_count > 0:
-                            st.warning(f"⚠️ 이상치 {discard_count}개가 제외되었습니다.")
+                        df_result = pd.DataFrame
 
-                    # [Sub Tab 2] 강도 통계 분석 (5가지 강도값 기준)
-                    with res_tab2:
-                        st.subheader("📈 산정된 압축강도 통계")
-                        st.info("💡 위 5가지 제안식으로 계산된 **압축강도 값들의 분포 특성**입니다.")
-                        
-                        # 통계 계산
-                        s_mean = np.mean(est_strengths)
-                        s_std = np.std(est_strengths, ddof=1)
-                        s_max = np.max(est_strengths)
-                        s_min = np.min(est_strengths)
-                        s_cov = (s_std / s_mean * 100) if s_mean > 0 else 0
-                        
-                        # 메트릭 표시
-                        col_s1, col_s2, col_s3 = st.columns(3)
-                        col_s1.metric("평균 강도", f"{s_mean:.2f} MPa")
-                        col_s2.metric("최대 강도", f"{s_max:.2f} MPa")
-                        col_s3.metric("최소 강도", f"{s_min:.2f} MPa")
-                        
-                        col_s4, col_s5, col_s6 = st.columns(3)
-                        col_s4.metric("표준편차", f"{s_std:.2f}")
-                        col_s5.metric("변동계수 (COV)", f"{s_cov:.1f} %")
-                        col_s6.metric("데이터 수", "5 개 (공식 수)")
-                        
-                        st.markdown("---")
-                        with st.expander("📊 분포 시각화 (간이 차트)"):
-                            chart_data = pd.DataFrame({
-                                "공식": df_result["구분"],
-                                "강도": est_strengths
-                            }).set_index("공식")
-                            st.bar_chart(chart_data)
-
-        except ValueError:
-            st.error("⚠️ 숫자만 입력해주세요.")
