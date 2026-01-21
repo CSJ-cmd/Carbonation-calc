@@ -299,7 +299,7 @@ with tab2:
                 "지점": st.column_config.TextColumn("지점", width="small"),
                 "각도": st.column_config.SelectboxColumn("각도", options=[-90, -45, 0, 45, 90], width="small", required=True),
                 "재령": st.column_config.NumberColumn("재령", width="small"),
-                "설계": st.column_config.NumberColumn("설계", width="small"),
+                "설계강도": st.column_config.NumberColumn("설계강도", width="small"),
                 "데이터": st.column_config.TextColumn("측정값", width="large")
             },
             hide_index=True, num_rows="dynamic", use_container_width=True
@@ -470,3 +470,4 @@ with tab3:
 
         except:
             st.error("입력 오류")
+
