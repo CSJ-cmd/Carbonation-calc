@@ -9,35 +9,26 @@ import altair as alt
 # 1. 페이지 기본 설정 및 스타일
 # =========================================================
 st.set_page_config(
-    page_title="안전진단 Pro (Mobile)",
+    page_title="구조물 안전진단 통합 평가 Pro",
     page_icon="🏗️",
-    layout="wide", # 모바일에서도 표를 넓게 보기 위해 wide 유지
-    initial_sidebar_state="collapsed" # 모바일에서는 사이드바를 기본적으로 숨김
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# 모바일용 CSS 스타일링 (여백 조정)
+# 모바일용 CSS 스타일링
 st.markdown("""
     <style>
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2px;
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 2px; }
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: #f0f2f6;
-        border-radius: 4px 4px 0px 0px;
-        gap: 1px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        height: 50px; white-space: pre-wrap; background-color: #f0f2f6;
+        border-radius: 4px 4px 0px 0px; gap: 1px; padding-top: 10px; padding-bottom: 10px;
     }
-    [data-testid="stMetricValue"] {
-        font-size: 1.2rem !important;
-    }
+    [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
     </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 2. 전역 함수 정의 (계산 로직 - 기존 동일)
+# 2. 전역 함수 정의
 # =========================================================
 
 def get_angle_correction(R_val, angle):
@@ -112,16 +103,12 @@ def convert_df(df):
 # =========================================================
 
 st.title("🏗️ 안전진단 Pro")
-# st.markdown("모바일 최적화 버전") 
 
-# 사이드바 (모바일에서는 기본 접힘)
 with st.sidebar:
     st.header("⚙️ 설정")
     project_name = st.text_input("프로젝트명", "OO교량")
     inspector = st.text_input("진단자", "홍길동")
-    st.info("Tip: 왼쪽 상단 화살표(>)를 눌러 메뉴를 닫으면 화면을 더 넓게 쓸 수 있습니다.")
 
-# 탭 메뉴
 tab1, tab2, tab3 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
 
 # ---------------------------------------------------------
@@ -129,10 +116,7 @@ tab1, tab2, tab3 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 통계�
 # ---------------------------------------------------------
 with tab1:
     st.subheader("탄산화 깊이 평가")
-    
-    # 카드형 입력 UI
     with st.container(border=True):
-        st.markdown("**📝 측정값 입력**")
         c1, c2 = st.columns(2)
         with c1: measured_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0, 0.1, format="%.1f")
         with c2: design_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0, 1.0)
@@ -141,7 +125,6 @@ with tab1:
     if st.button("평가 실행", type="primary", key="btn_carb", use_container_width=True):
         remaining = design_cover - measured_depth
         rate_coeff = measured_depth / math.sqrt(age_years) if age_years > 0 else 0
-        
         life_str = "계산 불가"
         is_danger = False
         grade, color, desc = "판정 불가", "gray", ""
@@ -174,13 +157,11 @@ with tab1:
             if is_danger: st.error("경고: 철근 위치 도달!")
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가
+# [Tab 2] 반발경도 평가 (그래프 추가됨)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("반발경도 강도 산정")
     
-    # 모바일에서는 라디오 버튼이 세로로 배치되는게 나을 수 있음, 공간 절약을 위해 expader로 감싸거나 selectbox 고려
-    # 여기선 가로형 라디오 유지하되 짧게 표현
     mode = st.radio(
         "입력 방식", 
         ["단일 입력", "다중 입력 (Batch)", "파일 업로드"], 
@@ -211,14 +192,29 @@ with tab2:
                 
                 with st.container(border=True):
                     st.success(f"평균: **{s_mean:.2f} MPa** ({ratio:.0f}%) → **{grade_mk}**")
+                    
+                    # [NEW] 단일 입력 결과 그래프 (공식별 비교)
                     df_res = pd.DataFrame({
                         "공식": ["일본건축", "일본재료", "과기부", "권영웅", "KALIS"],
                         "강도": res["Est_Strengths"]
                     })
+                    
+                    # Altair 차트: 막대(공식별 강도) + 빨간 점선(설계강도)
+                    base = alt.Chart(df_res).encode(x=alt.X('공식', sort=None), y='강도')
+                    bars = base.mark_bar().encode(
+                        color=alt.condition(
+                            alt.datum.강도 >= design_fck,
+                            alt.value('#4D96FF'),  # Pass (파랑)
+                            alt.value('#FF6B6B')   # Fail (빨강)
+                        )
+                    )
+                    rule = alt.Chart(pd.DataFrame({'y': [design_fck]})).mark_rule(color='red', strokeDash=[4, 4]).encode(y='y')
+                    
+                    st.altair_chart(bars + rule, use_container_width=True)
+
                     st.dataframe(
                         df_res.style.format({"강도": "{:.2f}"}).highlight_max(subset=["강도"], color="#d6eaf8"),
-                        use_container_width=True,
-                        hide_index=True
+                        use_container_width=True, hide_index=True
                     )
 
     # [Mode B] 다중 지점 직접 입력 (Batch)
@@ -310,6 +306,32 @@ with tab2:
                 if results:
                     st.toast(f"{success_count}개 지점 분석 완료!")
                     df_final = pd.DataFrame(results)
+                    
+                    # [NEW] 다중 입력 결과 그래프 (지점별 비교)
+                    st.markdown("### 📊 분석 결과 그래프")
+                    
+                    # Altair 차트: 지점별 강도 막대 + 설계강도 틱(Tick) 표시
+                    # (지점마다 설계강도가 다를 수 있으므로 Rule 대신 Tick 사용)
+                    bars = alt.Chart(df_final).mark_bar().encode(
+                        x=alt.X('지점', sort=None),
+                        y=alt.Y('강도', title='강도 (MPa)'),
+                        color=alt.condition(
+                            alt.datum.강도 >= alt.datum.설계,
+                            alt.value('#4D96FF'),
+                            alt.value('#FF6B6B')
+                        ),
+                        tooltip=['지점', '강도', '설계', '등급']
+                    )
+                    
+                    ticks = alt.Chart(df_final).mark_tick(
+                        color='red', thickness=2, size=20
+                    ).encode(
+                        x='지점',
+                        y='설계'
+                    )
+                    
+                    st.altair_chart(bars + ticks, use_container_width=True)
+
                     st.dataframe(
                         df_final.style.format({"강도": "{:.2f}", "비율": "{:.0f}%"})
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
@@ -328,9 +350,8 @@ with tab2:
                 if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file)
                 else: df_upload = pd.read_excel(uploaded_file)
                 
-                # ... (파일 처리 로직 기존과 동일하되 결과 표시는 모바일 최적화)
-                # 공간상 생략하지만 위 Batch 로직과 동일하게 dataframe의 hide_index=True 필수
-                st.success("파일 업로드 성공 (분석 로직은 위와 동일)")
+                # 파일 처리 로직 (간소화를 위해 생략했지만 위 Batch와 동일하게 처리하면 됨)
+                st.success("파일 업로드됨 (상세 로직은 Batch 모드 참조)")
             except Exception as e:
                 st.error(f"오류: {e}")
 
@@ -360,7 +381,7 @@ with tab3:
                     c1.metric("평균 강도", f"{st_mean:.2f}")
                     c2.metric("판정", f"{grade_mk}", delta=f"{ratio:.0f}%")
                 
-                # Altair Chart (모바일 너비 자동 맞춤)
+                # Altair Chart (설계강도 기준선 포함)
                 chart_df = pd.DataFrame({"순번": range(1, len(data_s)+1), "강도": sorted(data_s)})
                 
                 bars = alt.Chart(chart_df).mark_bar().encode(
@@ -371,7 +392,6 @@ with tab3:
                 
                 st.altair_chart(bars + rule, use_container_width=True)
                 
-                # 하단 상세 데이터 (접기)
                 with st.expander("상세 데이터 목록"):
                     st.dataframe(pd.DataFrame(data_s, columns=["강도"]), hide_index=True, use_container_width=True)
 
