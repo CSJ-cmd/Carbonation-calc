@@ -70,9 +70,8 @@ def get_age_coefficient(days):
 
 def calculate_strength(readings, angle, days, design_fck=24.0):
     """ 
-    강도 산정 로직 (설계강도에 따라 적용 공식 자동 변경)
-    - design_fck < 40 : 일반강도 식 적용 (일본건축, 일본재료)
-    - design_fck >= 40: 고강도 식 적용 (과기부, 권영웅, KALIS)
+    강도 산정 로직 
+    Returns: 모든 공식 결과값 + 설계강도 기준에 따른 평균값
     """
     if len(readings) < 5: return False, "데이터 부족 (5개 미만)"
     
@@ -89,35 +88,33 @@ def calculate_strength(readings, angle, days, design_fck=24.0):
     R0 = R_final + corr
     age_c = get_age_coefficient(days)
     
-    # 5가지 추정식 계산 (일단 모두 계산)
-    f_aij = (7.3 * R0 + 100) * 0.098 * age_c        
-    f_jsms = (1.27 * R0 - 18.0) * age_c             
-    f_mst = (15.2 * R0 - 112.8) * 0.098 * age_c     
-    f_kwon = (2.304 * R0 - 38.80) * age_c           
-    f_kalis = (1.3343 * R0 + 8.1977) * age_c 
+    # 5가지 추정식 모두 계산
+    f_aij = max(0, (7.3 * R0 + 100) * 0.098 * age_c)        
+    f_jsms = max(0, (1.27 * R0 - 18.0) * age_c)             
+    f_mst = max(0, (15.2 * R0 - 112.8) * 0.098 * age_c)     
+    f_kwon = max(0, (2.304 * R0 - 38.80) * age_c)           
+    f_kalis = max(0, (1.3343 * R0 + 8.1977) * age_c)
     
-    # [수정된 로직] 설계강도 기준 공식 필터링
-    formulas = {}
+    # 설계강도 기준 평균값 계산용 리스트
+    target_values = []
     if design_fck < 40:
-        formulas = {
-            "일본건축학회": f_aij,
-            "일본재료학회": f_jsms
-        }
+        target_values = [f_aij, f_jsms] # 일반강도
     else:
-        formulas = {
-            "과기부(고강도)": f_mst,
-            "권영웅(고강도)": f_kwon,
-            "KALIS(고강도)": f_kalis
-        }
+        target_values = [f_mst, f_kwon, f_kalis] # 고강도
     
-    # 평균 계산 (선택된 공식들로만)
-    est_values = [max(0, x) for x in formulas.values()]
-    s_mean = np.mean(est_values) if est_values else 0
+    s_mean = np.mean(target_values) if target_values else 0
     
+    # 모든 결과 반환
     return True, {
         "R_avg": R_final, "R0": R0, "Age_Coeff": age_c,
         "Discard": discard_cnt, 
-        "Formulas": formulas, # 딕셔너리 반환
+        "Formulas": { # 딕셔너리로 전체 결과 반환
+            "일본건축": f_aij,
+            "일본재료": f_jsms,
+            "과기부": f_mst,
+            "권영웅": f_kwon,
+            "KALIS": f_kalis
+        },
         "Mean_Strength": s_mean
     }
 
@@ -139,7 +136,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
 
 # ---------------------------------------------------------
-# [Tab 1] 탄산화 평가
+# [Tab 1] 탄산화 평가 (유지)
 # ---------------------------------------------------------
 with tab1:
     st.subheader("탄산화 깊이 평가")
@@ -184,7 +181,7 @@ with tab1:
             if is_danger: st.error("경고: 철근 위치 도달!")
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가 (조건부 공식 적용)
+# [Tab 2] 반발경도 평가 (다중 모드 개선)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("반발경도 강도 산정")
@@ -211,7 +208,6 @@ with tab2:
             clean = input_txt.replace(',', ' ').replace('\n', ' ')
             readings = [float(x) for x in clean.split() if x.strip()]
             
-            # [수정] design_fck 전달
             success, res = calculate_strength(readings, angle_opt, days_inp, design_fck)
             
             if not success:
@@ -220,27 +216,23 @@ with tab2:
                 s_mean = res["Mean_Strength"]
                 ratio = (s_mean / design_fck) * 100
                 grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
-                
-                # 적용된 공식 안내
                 applied_type = "고강도(≥40MPa)" if design_fck >= 40 else "일반강도(<40MPa)"
                 
                 with st.container(border=True):
                     st.success(f"평균: **{s_mean:.2f} MPa** ({ratio:.0f}%) → **{grade_mk}**")
                     st.caption(f"ℹ️ 적용 기준: {applied_type} 공식 자동 선택됨")
                     
-                    # 결과 데이터프레임 생성 (딕셔너리 기반)
                     df_res = pd.DataFrame({
                         "공식": res["Formulas"].keys(),
                         "강도": res["Formulas"].values()
                     })
                     
-                    # [그래프] 단일 입력: 공식별 막대 + 설계강도 점선
                     base = alt.Chart(df_res).encode(x=alt.X('공식', sort=None), y='강도')
                     bars = base.mark_bar().encode(
                         color=alt.condition(
                             alt.datum.강도 >= design_fck,
-                            alt.value('#4D96FF'), # Pass: 파랑
-                            alt.value('#FF6B6B')  # Fail: 빨강
+                            alt.value('#4D96FF'), 
+                            alt.value('#FF6B6B') 
                         )
                     )
                     rule = alt.Chart(pd.DataFrame({'y': [design_fck]})).mark_rule(
@@ -256,7 +248,7 @@ with tab2:
                     )
 
     # ============================================
-    # [Mode B] 다중 지점 직접 입력 (Batch)
+    # [Mode B] 다중 지점 직접 입력 (Batch) - 모든 결과 표시
     # ============================================
     elif mode == "다중 입력 (Batch)":
         with st.expander("ℹ️ 사용법 및 데이터 붙여넣기", expanded=True):
@@ -326,15 +318,33 @@ with tab2:
                         try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
                         except: readings = []
 
-                        # [수정] design_fck (row["설계"]) 전달
                         success, res = calculate_strength(readings, row["각도"], row["재령"], row["설계"])
-                        entry = {"지점": row["지점"], "설계": row["설계"], "결과": "실패", "강도": 0.0, "등급": "-"}
+                        
+                        entry = {
+                            "지점": row["지점"], 
+                            "설계": row["설계"], 
+                            "결과": "실패", 
+                            "평균강도": 0.0, 
+                            "등급": "-",
+                            # 초기화
+                            "일본건축": 0.0, "일본재료": 0.0, "과기부": 0.0, "권영웅": 0.0, "KALIS": 0.0
+                        }
                         
                         if success:
                             s_mean = res["Mean_Strength"]
                             ratio = (s_mean / row["설계"]) * 100 if row["설계"] > 0 else 0
                             grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
-                            entry.update({"결과": "성공", "강도": round(s_mean, 2), "비율": round(ratio, 0), "등급": grade_mk})
+                            
+                            entry.update({
+                                "결과": "성공", 
+                                "평균강도": round(s_mean, 2), 
+                                "등급": grade_mk,
+                                "일본건축": round(res["Formulas"]["일본건축"], 1),
+                                "일본재료": round(res["Formulas"]["일본재료"], 1),
+                                "과기부": round(res["Formulas"]["과기부"], 1),
+                                "권영웅": round(res["Formulas"]["권영웅"], 1),
+                                "KALIS": round(res["Formulas"]["KALIS"], 1)
+                            })
                             success_count += 1
                         results.append(entry)
                     status.update(label="분석 완료!", state="complete", expanded=False)
@@ -344,19 +354,19 @@ with tab2:
                     
                     st.markdown("### 📊 분석 결과 그래프")
                     
+                    # Altair Chart: 지점별 평균강도 막대 + 설계강도 눈금
                     base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
                     
                     bars_b = base_b.mark_bar().encode(
-                        y=alt.Y('강도', title='강도 (MPa)'),
+                        y=alt.Y('평균강도', title='평균강도 (MPa)'),
                         color=alt.condition(
-                            alt.datum.강도 >= alt.datum.설계,
+                            alt.datum.평균강도 >= alt.datum.설계,
                             alt.value('#4D96FF'),
                             alt.value('#FF6B6B')
                         ),
-                        tooltip=['지점', '강도', '설계', '등급']
+                        tooltip=['지점', '평균강도', '설계', '등급']
                     )
                     
-                    # 설계강도 붉은 눈금 (Tick)
                     ticks_b = base_b.mark_tick(
                         color='red', thickness=3, size=30
                     ).encode(
@@ -366,12 +376,24 @@ with tab2:
                     
                     st.altair_chart(bars_b + ticks_b, use_container_width=True)
 
+                    # 결과 테이블 표시 (전체 공식 포함)
+                    # 표시할 컬럼 순서 지정
+                    cols = ["지점", "설계", "평균강도", "등급", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
+                    
                     st.dataframe(
-                        df_final.style.format({"강도": "{:.2f}", "비율": "{:.0f}%"})
+                        df_final[cols].style.format({
+                            "평균강도": "{:.2f}", 
+                            "설계": "{:.1f}", 
+                            "일본건축": "{:.1f}", 
+                            "일본재료": "{:.1f}", 
+                            "과기부": "{:.1f}", 
+                            "권영웅": "{:.1f}", 
+                            "KALIS": "{:.1f}"
+                        })
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
                         use_container_width=True, hide_index=True
                     )
-                    st.download_button("CSV 저장", convert_df(df_final), f"{project_name}_Batch.csv", "text/csv", use_container_width=True)
+                    st.download_button("CSV 저장", convert_df(df_final[cols]), f"{project_name}_Batch.csv", "text/csv", use_container_width=True)
 
     # ============================================
     # [Mode C] 파일 업로드
@@ -385,12 +407,7 @@ with tab2:
             try:
                 if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file)
                 else: df_upload = pd.read_excel(uploaded_file)
-                
-                # 파일 처리 로직 (Batch와 동일, display 생략)
-                st.success("파일이 업로드되었습니다. (분석 로직은 Batch와 동일하게 design_fck 기준 적용)")
-                
-                # ... (실제 구현 시 Batch 로직 복사해서 사용)
-                
+                st.success("파일 업로드 성공 (분석 로직은 Batch 모드 참조)")
             except Exception as e:
                 st.error(f"오류: {e}")
 
