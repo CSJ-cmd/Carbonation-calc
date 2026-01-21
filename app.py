@@ -15,6 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# 모바일 가독성 최적화 CSS
 st.markdown("""
     <style>
     .stTabs [data-baseweb="tab-list"] { gap: 2px; }
@@ -23,6 +24,10 @@ st.markdown("""
         border-radius: 4px 4px 0px 0px; gap: 1px; padding-top: 10px; padding-bottom: 10px;
     }
     [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+    /* 통계 컨테이너 여백 조정 */
+    [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+        gap: 0.5rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -136,7 +141,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
 
 # ---------------------------------------------------------
-# [Tab 1] 탄산화 평가 (유지)
+# [Tab 1] 탄산화 평가
 # ---------------------------------------------------------
 with tab1:
     st.subheader("탄산화 깊이 평가")
@@ -181,7 +186,7 @@ with tab1:
             if is_danger: st.error("경고: 철근 위치 도달!")
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가 (다중 모드 개선)
+# [Tab 2] 반발경도 평가
 # ---------------------------------------------------------
 with tab2:
     st.subheader("반발경도 강도 산정")
@@ -193,9 +198,7 @@ with tab2:
         label_visibility="collapsed"
     )
 
-    # ============================================
     # [Mode A] 단일 지점 입력
-    # ============================================
     if mode == "단일 입력":
         with st.container(border=True):
             c1, c2 = st.columns(2)
@@ -247,9 +250,7 @@ with tab2:
                         use_container_width=True, hide_index=True
                     )
 
-    # ============================================
-    # [Mode B] 다중 지점 직접 입력 (Batch) - 모든 결과 표시
-    # ============================================
+    # [Mode B] 다중 지점 직접 입력 (Batch)
     elif mode == "다중 입력 (Batch)":
         with st.expander("ℹ️ 사용법 및 데이터 붙여넣기", expanded=True):
             st.caption("엑셀 복사: `지점명` `각도` `재령` `설계강도` `측정값20개`")
@@ -326,7 +327,6 @@ with tab2:
                             "결과": "실패", 
                             "평균강도": 0.0, 
                             "등급": "-",
-                            # 초기화
                             "일본건축": 0.0, "일본재료": 0.0, "과기부": 0.0, "권영웅": 0.0, "KALIS": 0.0
                         }
                         
@@ -354,7 +354,6 @@ with tab2:
                     
                     st.markdown("### 📊 분석 결과 그래프")
                     
-                    # Altair Chart: 지점별 평균강도 막대 + 설계강도 눈금
                     base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
                     
                     bars_b = base_b.mark_bar().encode(
@@ -376,8 +375,6 @@ with tab2:
                     
                     st.altair_chart(bars_b + ticks_b, use_container_width=True)
 
-                    # 결과 테이블 표시 (전체 공식 포함)
-                    # 표시할 컬럼 순서 지정
                     cols = ["지점", "설계", "평균강도", "등급", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
                     
                     st.dataframe(
@@ -395,9 +392,7 @@ with tab2:
                     )
                     st.download_button("CSV 저장", convert_df(df_final[cols]), f"{project_name}_Batch.csv", "text/csv", use_container_width=True)
 
-    # ============================================
     # [Mode C] 파일 업로드
-    # ============================================
     elif mode == "파일 업로드":
         with st.container(border=True):
             st.caption("양식: Location, Angle, Age, Design_Fck, Readings")
@@ -412,7 +407,7 @@ with tab2:
                 st.error(f"오류: {e}")
 
 # ---------------------------------------------------------
-# [Tab 3] 강도 통계 및 비교
+# [Tab 3] 강도 통계 및 비교 (모바일 최적화 및 통계 추가)
 # ---------------------------------------------------------
 with tab3:
     st.subheader("통계 및 안전성 평가")
@@ -428,16 +423,35 @@ with tab3:
             if len(data_s) < 2:
                 st.warning("데이터 2개 이상 필요")
             else:
+                # 통계 계산
                 st_mean = np.mean(data_s)
+                st_std = np.std(data_s, ddof=1)
+                st_cov = (st_std / st_mean * 100) if st_mean > 0 else 0
+                st_max = np.max(data_s)
+                st_min = np.min(data_s)
+
                 ratio = (st_mean / design_fck_stats) * 100
                 grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                 
+                # 1. 종합 판정 (카드형)
                 with st.container(border=True):
+                    st.markdown("#### 📊 종합 판정")
                     c1, c2 = st.columns(2)
-                    c1.metric("평균 강도", f"{st_mean:.2f}")
+                    c1.metric("평균 강도", f"{st_mean:.2f} MPa")
                     c2.metric("판정", f"{grade_mk}", delta=f"{ratio:.0f}%")
+
+                # 2. 상세 통계 (2열 배치 - 모바일 최적화)
+                with st.container(border=True):
+                    st.markdown("#### 📈 상세 통계")
+                    r1c1, r1c2 = st.columns(2)
+                    r1c1.metric("최대값 (Max)", f"{st_max:.2f}")
+                    r1c2.metric("최소값 (Min)", f"{st_min:.2f}")
+                    
+                    r2c1, r2c2 = st.columns(2)
+                    r2c1.metric("표준편차", f"{st_std:.2f}")
+                    r2c2.metric("변동계수", f"{st_cov:.1f}%")
                 
-                # [그래프] 통계 분포 + 설계강도 점선
+                # 3. 차트 (Altair)
                 chart_df = pd.DataFrame({"순번": range(1, len(data_s)+1), "강도": sorted(data_s)})
                 
                 bars = alt.Chart(chart_df).mark_bar().encode(
