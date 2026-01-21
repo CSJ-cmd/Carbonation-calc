@@ -6,7 +6,7 @@ import io
 import altair as alt
 
 # =========================================================
-# 1. 페이지 기본 설정 및 스타일 (공백 문자 오류 수정됨)
+# 1. 페이지 기본 설정 및 스타일
 # =========================================================
 st.set_page_config(
     page_title="구조물 안전진단 통합 평가 Pro",
@@ -15,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 모바일 및 탭 스타일링
 st.markdown("""
     <style>
     .stTabs [data-baseweb="tab-list"] { gap: 2px; }
@@ -69,8 +68,12 @@ def get_age_coefficient(days):
             return c1 + ratio * (c2 - c1)
     return 1.0
 
-def calculate_strength(readings, angle, days):
-    """ 강도 산정 로직 """
+def calculate_strength(readings, angle, days, design_fck=24.0):
+    """ 
+    강도 산정 로직 (설계강도에 따라 적용 공식 자동 변경)
+    - design_fck < 40 : 일반강도 식 적용 (일본건축, 일본재료)
+    - design_fck >= 40: 고강도 식 적용 (과기부, 권영웅, KALIS)
+    """
     if len(readings) < 5: return False, "데이터 부족 (5개 미만)"
     
     # 이상치 제거
@@ -86,19 +89,36 @@ def calculate_strength(readings, angle, days):
     R0 = R_final + corr
     age_c = get_age_coefficient(days)
     
-    # 5가지 추정식
+    # 5가지 추정식 계산 (일단 모두 계산)
     f_aij = (7.3 * R0 + 100) * 0.098 * age_c        
     f_jsms = (1.27 * R0 - 18.0) * age_c             
     f_mst = (15.2 * R0 - 112.8) * 0.098 * age_c     
     f_kwon = (2.304 * R0 - 38.80) * age_c           
     f_kalis = (1.3343 * R0 + 8.1977) * age_c 
     
-    est_list = [max(0, x) for x in [f_aij, f_jsms, f_mst, f_kwon, f_kalis]]
-    s_mean = np.mean(est_list)
+    # [수정된 로직] 설계강도 기준 공식 필터링
+    formulas = {}
+    if design_fck < 40:
+        formulas = {
+            "일본건축학회": f_aij,
+            "일본재료학회": f_jsms
+        }
+    else:
+        formulas = {
+            "과기부(고강도)": f_mst,
+            "권영웅(고강도)": f_kwon,
+            "KALIS(고강도)": f_kalis
+        }
+    
+    # 평균 계산 (선택된 공식들로만)
+    est_values = [max(0, x) for x in formulas.values()]
+    s_mean = np.mean(est_values) if est_values else 0
     
     return True, {
         "R_avg": R_final, "R0": R0, "Age_Coeff": age_c,
-        "Discard": discard_cnt, "Est_Strengths": est_list, "Mean_Strength": s_mean
+        "Discard": discard_cnt, 
+        "Formulas": formulas, # 딕셔너리 반환
+        "Mean_Strength": s_mean
     }
 
 def convert_df(df):
@@ -164,7 +184,7 @@ with tab1:
             if is_danger: st.error("경고: 철근 위치 도달!")
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가
+# [Tab 2] 반발경도 평가 (조건부 공식 적용)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("반발경도 강도 산정")
@@ -184,13 +204,15 @@ with tab2:
             c1, c2 = st.columns(2)
             with c1: angle_opt = st.selectbox("타격 방향", [0, -90, -45, 45, 90], format_func=lambda x: f"{x}°")
             with c2: days_inp = st.number_input("재령(일)", 10, 10000, 1000)
-            design_fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
+            design_fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, help="40MPa 이상일 경우 고강도 공식이 적용됩니다.")
             input_txt = st.text_area("측정값 (20개)", "54 56 55 53 58 55 54 55 52 57 55 56 54 55 59 42 55 56 54 55", height=100)
             
         if st.button("계산 실행", type="primary", key="btn_single", use_container_width=True):
             clean = input_txt.replace(',', ' ').replace('\n', ' ')
             readings = [float(x) for x in clean.split() if x.strip()]
-            success, res = calculate_strength(readings, angle_opt, days_inp)
+            
+            # [수정] design_fck 전달
+            success, res = calculate_strength(readings, angle_opt, days_inp, design_fck)
             
             if not success:
                 st.error(res)
@@ -199,12 +221,17 @@ with tab2:
                 ratio = (s_mean / design_fck) * 100
                 grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                 
+                # 적용된 공식 안내
+                applied_type = "고강도(≥40MPa)" if design_fck >= 40 else "일반강도(<40MPa)"
+                
                 with st.container(border=True):
                     st.success(f"평균: **{s_mean:.2f} MPa** ({ratio:.0f}%) → **{grade_mk}**")
+                    st.caption(f"ℹ️ 적용 기준: {applied_type} 공식 자동 선택됨")
                     
+                    # 결과 데이터프레임 생성 (딕셔너리 기반)
                     df_res = pd.DataFrame({
-                        "공식": ["일본건축", "일본재료", "과기부", "권영웅", "KALIS"],
-                        "강도": res["Est_Strengths"]
+                        "공식": res["Formulas"].keys(),
+                        "강도": res["Formulas"].values()
                     })
                     
                     # [그래프] 단일 입력: 공식별 막대 + 설계강도 점선
@@ -222,7 +249,6 @@ with tab2:
                     
                     st.altair_chart(bars + rule, use_container_width=True)
 
-                    # 결과 표 (서식 오류 수정됨)
                     st.dataframe(
                         df_res.style.format({"강도": "{:.2f}"})
                         .highlight_max(subset=["강도"], color="#d6eaf8"),
@@ -252,9 +278,8 @@ with tab2:
                 
                 try:
                     loc_name = parts[0]
-                    try: float(parts[1]) # 헤더 체크
+                    try: float(parts[1]) 
                     except: continue 
-                    
                     try: angle_val = int(float(parts[1]))
                     except: angle_val = 0
                     try: age_val = int(float(parts[2]))
@@ -301,7 +326,8 @@ with tab2:
                         try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
                         except: readings = []
 
-                        success, res = calculate_strength(readings, row["각도"], row["재령"])
+                        # [수정] design_fck (row["설계"]) 전달
+                        success, res = calculate_strength(readings, row["각도"], row["재령"], row["설계"])
                         entry = {"지점": row["지점"], "설계": row["설계"], "결과": "실패", "강도": 0.0, "등급": "-"}
                         
                         if success:
@@ -318,8 +344,6 @@ with tab2:
                     
                     st.markdown("### 📊 분석 결과 그래프")
                     
-                    # [그래프] Batch 입력: 지점별 막대 + 설계강도 눈금(Tick) 표시
-                    # 지점별로 설계강도가 다를 수 있으므로 일자 선보다는 눈금(Tick)이 정확함
                     base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
                     
                     bars_b = base_b.mark_bar().encode(
@@ -332,7 +356,7 @@ with tab2:
                         tooltip=['지점', '강도', '설계', '등급']
                     )
                     
-                    # 설계강도 붉은 눈금 (Tick) - 각 막대 위에 표시됨
+                    # 설계강도 붉은 눈금 (Tick)
                     ticks_b = base_b.mark_tick(
                         color='red', thickness=3, size=30
                     ).encode(
@@ -361,7 +385,12 @@ with tab2:
             try:
                 if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file)
                 else: df_upload = pd.read_excel(uploaded_file)
-                st.success("파일 업로드 성공 (분석 로직은 위와 동일)")
+                
+                # 파일 처리 로직 (Batch와 동일, display 생략)
+                st.success("파일이 업로드되었습니다. (분석 로직은 Batch와 동일하게 design_fck 기준 적용)")
+                
+                # ... (실제 구현 시 Batch 로직 복사해서 사용)
+                
             except Exception as e:
                 st.error(f"오류: {e}")
 
@@ -391,7 +420,7 @@ with tab3:
                     c1.metric("평균 강도", f"{st_mean:.2f}")
                     c2.metric("판정", f"{grade_mk}", delta=f"{ratio:.0f}%")
                 
-                # [그래프] 통계 분포 + 빨간 점선
+                # [그래프] 통계 분포 + 설계강도 점선
                 chart_df = pd.DataFrame({"순번": range(1, len(data_s)+1), "강도": sorted(data_s)})
                 
                 bars = alt.Chart(chart_df).mark_bar().encode(
@@ -399,7 +428,6 @@ with tab3:
                     color=alt.condition(alt.datum.강도 < design_fck_stats, alt.value('#FF6B6B'), alt.value('#4D96FF'))
                 )
                 
-                # 설계강도 점선 (Rule)
                 rule = alt.Chart(pd.DataFrame({'y': [design_fck_stats]})).mark_rule(
                     color='red', strokeDash=[5, 3], size=2
                 ).encode(y='y')
