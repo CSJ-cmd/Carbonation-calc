@@ -15,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 모바일 가독성 최적화 CSS
 st.markdown("""
     <style>
     .stTabs [data-baseweb="tab-list"] { gap: 2px; }
@@ -24,10 +23,6 @@ st.markdown("""
         border-radius: 4px 4px 0px 0px; gap: 1px; padding-top: 10px; padding-bottom: 10px;
     }
     [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-    /* 통계 컨테이너 여백 조정 */
-    [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-        gap: 0.5rem;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -74,10 +69,7 @@ def get_age_coefficient(days):
     return 1.0
 
 def calculate_strength(readings, angle, days, design_fck=24.0):
-    """ 
-    강도 산정 로직 
-    Returns: 모든 공식 결과값 + 설계강도 기준에 따른 평균값
-    """
+    """ 강도 산정 로직 """
     if len(readings) < 5: return False, "데이터 부족 (5개 미만)"
     
     # 이상치 제거
@@ -93,14 +85,14 @@ def calculate_strength(readings, angle, days, design_fck=24.0):
     R0 = R_final + corr
     age_c = get_age_coefficient(days)
     
-    # 5가지 추정식 모두 계산
+    # 5가지 추정식 계산
     f_aij = max(0, (7.3 * R0 + 100) * 0.098 * age_c)        
     f_jsms = max(0, (1.27 * R0 - 18.0) * age_c)             
     f_mst = max(0, (15.2 * R0 - 112.8) * 0.098 * age_c)     
     f_kwon = max(0, (2.304 * R0 - 38.80) * age_c)           
     f_kalis = max(0, (1.3343 * R0 + 8.1977) * age_c)
     
-    # 설계강도 기준 평균값 계산용 리스트
+    # 설계강도 기준 평균값 계산용
     target_values = []
     if design_fck < 40:
         target_values = [f_aij, f_jsms] # 일반강도
@@ -109,11 +101,10 @@ def calculate_strength(readings, angle, days, design_fck=24.0):
     
     s_mean = np.mean(target_values) if target_values else 0
     
-    # 모든 결과 반환
     return True, {
         "R_avg": R_final, "R0": R0, "Age_Coeff": age_c,
         "Discard": discard_cnt, 
-        "Formulas": { # 딕셔너리로 전체 결과 반환
+        "Formulas": {
             "일본건축": f_aij,
             "일본재료": f_jsms,
             "과기부": f_mst,
@@ -198,7 +189,9 @@ with tab2:
         label_visibility="collapsed"
     )
 
+    # ============================================
     # [Mode A] 단일 지점 입력
+    # ============================================
     if mode == "단일 입력":
         with st.container(border=True):
             c1, c2 = st.columns(2)
@@ -218,11 +211,10 @@ with tab2:
             else:
                 s_mean = res["Mean_Strength"]
                 ratio = (s_mean / design_fck) * 100
-                grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                 applied_type = "고강도(≥40MPa)" if design_fck >= 40 else "일반강도(<40MPa)"
                 
                 with st.container(border=True):
-                    st.success(f"평균: **{s_mean:.2f} MPa** ({ratio:.0f}%) → **{grade_mk}**")
+                    st.success(f"평균: **{s_mean:.2f} MPa** (설계비: **{ratio:.1f}%**)")
                     st.caption(f"ℹ️ 적용 기준: {applied_type} 공식 자동 선택됨")
                     
                     df_res = pd.DataFrame({
@@ -230,6 +222,7 @@ with tab2:
                         "강도": res["Formulas"].values()
                     })
                     
+                    # 그래프
                     base = alt.Chart(df_res).encode(x=alt.X('공식', sort=None), y='강도')
                     bars = base.mark_bar().encode(
                         color=alt.condition(
@@ -250,7 +243,7 @@ with tab2:
                         use_container_width=True, hide_index=True
                     )
 
-# ============================================
+    # ============================================
     # [Mode B] 다중 지점 직접 입력 (Batch)
     # ============================================
     elif mode == "다중 입력 (Batch)":
@@ -321,32 +314,26 @@ with tab2:
                         try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
                         except: readings = []
 
-                        # [수정] 설계강도 오류 방지 (빈 값일 경우 24.0으로 대체)
-                        try:
-                            design_fck = float(row["설계"]) if pd.notnull(row["설계"]) else 24.0
-                        except:
-                            design_fck = 24.0
+                        # 설계강도 오류 방지
+                        try: design_fck = float(row["설계"]) if pd.notnull(row["설계"]) else 24.0
+                        except: design_fck = 24.0
 
                         success, res = calculate_strength(readings, row["각도"], row["재령"], design_fck)
                         
                         entry = {
-                            "지점": row["지점"], 
-                            "설계": design_fck, 
-                            "결과": "실패", 
-                            "평균강도": 0.0, 
-                            "등급": "-",
+                            "지점": row["지점"], "설계": design_fck, "결과": "실패", 
+                            "평균강도": 0.0, "강도비(%)": 0.0, # 등급 대신 강도비
                             "일본건축": 0.0, "일본재료": 0.0, "과기부": 0.0, "권영웅": 0.0, "KALIS": 0.0
                         }
                         
                         if success:
                             s_mean = res["Mean_Strength"]
                             ratio = (s_mean / design_fck) * 100 if design_fck > 0 else 0
-                            grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                             
                             entry.update({
                                 "결과": "성공", 
                                 "평균강도": round(s_mean, 2), 
-                                "등급": grade_mk,
+                                "강도비(%)": round(ratio, 1),
                                 "일본건축": round(res["Formulas"]["일본건축"], 1),
                                 "일본재료": round(res["Formulas"]["일본재료"], 1),
                                 "과기부": round(res["Formulas"]["과기부"], 1),
@@ -362,8 +349,8 @@ with tab2:
                     
                     st.markdown("### 📊 분석 결과 그래프")
                     
+                    # 그래프
                     base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
-                    
                     bars_b = base_b.mark_bar().encode(
                         y=alt.Y('평균강도', title='평균강도 (MPa)'),
                         color=alt.condition(
@@ -371,36 +358,37 @@ with tab2:
                             alt.value('#4D96FF'),
                             alt.value('#FF6B6B')
                         ),
-                        tooltip=['지점', '평균강도', '설계', '등급']
+                        tooltip=['지점', '평균강도', '설계', '강도비(%)']
                     )
-                    
                     ticks_b = base_b.mark_tick(
                         color='red', thickness=3, size=30
-                    ).encode(
-                        y='설계',
-                        tooltip=['설계']
-                    )
+                    ).encode(y='설계', tooltip=['설계'])
                     
                     st.altair_chart(bars_b + ticks_b, use_container_width=True)
 
-                    cols = ["지점", "설계", "평균강도", "등급", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
+                    # 결과 테이블 (강도비(%) 표시)
+                    cols = ["지점", "설계", "평균강도", "강도비(%)", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
                     
+                    # 강도비(%)가 100 미만인 경우 텍스트를 빨간색으로 표시
                     st.dataframe(
                         df_final[cols].style.format({
                             "평균강도": "{:.2f}", 
                             "설계": "{:.1f}", 
+                            "강도비(%)": "{:.1f}%",
                             "일본건축": "{:.1f}", 
                             "일본재료": "{:.1f}", 
                             "과기부": "{:.1f}", 
                             "권영웅": "{:.1f}", 
                             "KALIS": "{:.1f}"
                         })
-                        .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
+                        .applymap(lambda v: 'color: red; font-weight: bold;' if isinstance(v, (int, float)) and v < 100 else None, subset=["강도비(%)"]),
                         use_container_width=True, hide_index=True
                     )
                     st.download_button("CSV 저장", convert_df(df_final[cols]), f"{project_name}_Batch.csv", "text/csv", use_container_width=True)
-                    
+
+    # ============================================
     # [Mode C] 파일 업로드
+    # ============================================
     elif mode == "파일 업로드":
         with st.container(border=True):
             st.caption("양식: Location, Angle, Age, Design_Fck, Readings")
@@ -415,7 +403,7 @@ with tab2:
                 st.error(f"오류: {e}")
 
 # ---------------------------------------------------------
-# [Tab 3] 강도 통계 및 비교 (모바일 최적화 및 통계 추가)
+# [Tab 3] 강도 통계 및 비교
 # ---------------------------------------------------------
 with tab3:
     st.subheader("통계 및 안전성 평가")
@@ -431,7 +419,6 @@ with tab3:
             if len(data_s) < 2:
                 st.warning("데이터 2개 이상 필요")
             else:
-                # 통계 계산
                 st_mean = np.mean(data_s)
                 st_std = np.std(data_s, ddof=1)
                 st_cov = (st_std / st_mean * 100) if st_mean > 0 else 0
@@ -441,14 +428,12 @@ with tab3:
                 ratio = (st_mean / design_fck_stats) * 100
                 grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                 
-                # 1. 종합 판정 (카드형)
                 with st.container(border=True):
                     st.markdown("#### 📊 종합 판정")
                     c1, c2 = st.columns(2)
                     c1.metric("평균 강도", f"{st_mean:.2f} MPa")
                     c2.metric("판정", f"{grade_mk}", delta=f"{ratio:.0f}%")
 
-                # 2. 상세 통계 (2열 배치 - 모바일 최적화)
                 with st.container(border=True):
                     st.markdown("#### 📈 상세 통계")
                     r1c1, r1c2 = st.columns(2)
@@ -459,7 +444,6 @@ with tab3:
                     r2c1.metric("표준편차", f"{st_std:.2f}")
                     r2c2.metric("변동계수", f"{st_cov:.1f}%")
                 
-                # 3. 차트 (Altair)
                 chart_df = pd.DataFrame({"순번": range(1, len(data_s)+1), "강도": sorted(data_s)})
                 
                 bars = alt.Chart(chart_df).mark_bar().encode(
@@ -478,5 +462,3 @@ with tab3:
 
         except:
             st.error("입력 오류")
-
-
