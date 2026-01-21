@@ -15,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 모바일용 CSS 스타일링
 st.markdown("""
     <style>
     .stTabs [data-baseweb="tab-list"] { gap: 2px; }
@@ -157,7 +156,7 @@ with tab1:
             if is_danger: st.error("경고: 철근 위치 도달!")
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가 (그래프 추가됨)
+# [Tab 2] 반발경도 평가
 # ---------------------------------------------------------
 with tab2:
     st.subheader("반발경도 강도 산정")
@@ -193,25 +192,24 @@ with tab2:
                 with st.container(border=True):
                     st.success(f"평균: **{s_mean:.2f} MPa** ({ratio:.0f}%) → **{grade_mk}**")
                     
-                    # [NEW] 단일 입력 결과 그래프 (공식별 비교)
                     df_res = pd.DataFrame({
                         "공식": ["일본건축", "일본재료", "과기부", "권영웅", "KALIS"],
                         "강도": res["Est_Strengths"]
                     })
                     
-                    # Altair 차트: 막대(공식별 강도) + 빨간 점선(설계강도)
+                    # [그래프] 단일 입력: 공식별 막대 + 설계강도 붉은 점선
                     base = alt.Chart(df_res).encode(x=alt.X('공식', sort=None), y='강도')
                     bars = base.mark_bar().encode(
-                        color=alt.condition(
-                            alt.datum.강도 >= design_fck,
-                            alt.value('#4D96FF'),  # Pass (파랑)
-                            alt.value('#FF6B6B')   # Fail (빨강)
-                        )
+                        color=alt.condition(alt.datum.강도 >= design_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
                     )
-                    rule = alt.Chart(pd.DataFrame({'y': [design_fck]})).mark_rule(color='red', strokeDash=[4, 4]).encode(y='y')
+                    # 설계강도 점선 (Rule)
+                    rule = alt.Chart(pd.DataFrame({'y': [design_fck]})).mark_rule(
+                        color='red', strokeDash=[5, 3]
+                    ).encode(y='y')
                     
                     st.altair_chart(bars + rule, use_container_width=True)
 
+                    # [오류 수정] 컬럼 지정 포맷팅
                     st.dataframe(
                         df_res.style.format({"강도": "{:.2f}"}).highlight_max(subset=["강도"], color="#d6eaf8"),
                         use_container_width=True, hide_index=True
@@ -221,14 +219,9 @@ with tab2:
     elif mode == "다중 입력 (Batch)":
         with st.expander("ℹ️ 사용법 및 데이터 붙여넣기", expanded=True):
             st.caption("엑셀 복사: `지점명` `각도` `재령` `설계강도` `측정값20개`")
-            batch_input = st.text_area(
-                "Raw Data", 
-                height=100, 
-                placeholder="P1 0 1000 24 55 56 ...",
-                label_visibility="collapsed"
-            )
+            batch_input = st.text_area("Raw Data", height=100, placeholder="P1 0 1000 24 55 56 ...", label_visibility="collapsed")
 
-        # Pre-processing
+        # 1. 초기 데이터 파싱
         initial_data = []
         if batch_input.strip():
             lines = batch_input.strip().split('\n')
@@ -241,6 +234,10 @@ with tab2:
                 
                 try:
                     loc_name = parts[0]
+                    # 헤더(문자) 건너뛰기
+                    try: float(parts[1]) 
+                    except: continue 
+                    
                     try: angle_val = int(float(parts[1]))
                     except: angle_val = 0
                     try: age_val = int(float(parts[2]))
@@ -259,6 +256,7 @@ with tab2:
         else:
             df_input = pd.DataFrame(initial_data)
 
+        # 2. 데이터 에디터
         st.markdown("👇 **데이터 편집** (아래 표에서 수정 가능)")
         edited_df = st.data_editor(
             df_input,
@@ -290,30 +288,26 @@ with tab2:
                         except: readings = []
 
                         success, res = calculate_strength(readings, row["각도"], row["재령"])
-                        
                         entry = {"지점": row["지점"], "설계": row["설계"], "결과": "실패", "강도": 0.0, "등급": "-"}
                         
                         if success:
                             s_mean = res["Mean_Strength"]
                             ratio = (s_mean / row["설계"]) * 100 if row["설계"] > 0 else 0
                             grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
-                            
                             entry.update({"결과": "성공", "강도": round(s_mean, 2), "비율": round(ratio, 0), "등급": grade_mk})
                             success_count += 1
                         results.append(entry)
                     status.update(label="분석 완료!", state="complete", expanded=False)
                 
                 if results:
-                    st.toast(f"{success_count}개 지점 분석 완료!")
                     df_final = pd.DataFrame(results)
                     
-                    # [NEW] 다중 입력 결과 그래프 (지점별 비교)
+                    # [그래프] Batch 입력: 지점별 강도 막대 + 설계강도(점선) 표시
                     st.markdown("### 📊 분석 결과 그래프")
                     
-                    # Altair 차트: 지점별 강도 막대 + 설계강도 틱(Tick) 표시
-                    # (지점마다 설계강도가 다를 수 있으므로 Rule 대신 Tick 사용)
-                    bars = alt.Chart(df_final).mark_bar().encode(
-                        x=alt.X('지점', sort=None),
+                    # 1. 강도 막대
+                    base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
+                    bars_b = base_b.mark_bar().encode(
                         y=alt.Y('강도', title='강도 (MPa)'),
                         color=alt.condition(
                             alt.datum.강도 >= alt.datum.설계,
@@ -323,15 +317,15 @@ with tab2:
                         tooltip=['지점', '강도', '설계', '등급']
                     )
                     
-                    ticks = alt.Chart(df_final).mark_tick(
-                        color='red', thickness=2, size=20
-                    ).encode(
-                        x='지점',
+                    # 2. 설계강도 점선 (지점별로 설계값이 다를 수 있으므로 Line 사용)
+                    # 만약 모든 지점이 같은 설계값이면 일자로 보이고, 다르면 연결선으로 보임
+                    line_b = base_b.mark_line(color='red', strokeDash=[5, 3], point=True).encode(
                         y='설계'
                     )
                     
-                    st.altair_chart(bars + ticks, use_container_width=True)
+                    st.altair_chart(bars_b + line_b, use_container_width=True)
 
+                    # [오류 수정] 컬럼 지정 포맷팅
                     st.dataframe(
                         df_final.style.format({"강도": "{:.2f}", "비율": "{:.0f}%"})
                         .applymap(lambda v: 'color: red; font-weight: bold;' if v == '실패' or v == 'D/E' else None),
@@ -349,9 +343,8 @@ with tab2:
             try:
                 if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file)
                 else: df_upload = pd.read_excel(uploaded_file)
-                
-                # 파일 처리 로직 (간소화를 위해 생략했지만 위 Batch와 동일하게 처리하면 됨)
-                st.success("파일 업로드됨 (상세 로직은 Batch 모드 참조)")
+                # (파일 처리 로직 생략 - Batch와 동일하게 구성 가능)
+                st.success("파일 업로드 성공 (분석 로직은 Batch 모드 참조)")
             except Exception as e:
                 st.error(f"오류: {e}")
 
@@ -381,14 +374,16 @@ with tab3:
                     c1.metric("평균 강도", f"{st_mean:.2f}")
                     c2.metric("판정", f"{grade_mk}", delta=f"{ratio:.0f}%")
                 
-                # Altair Chart (설계강도 기준선 포함)
+                # [그래프] 통계: 분포 막대 + 설계강도 붉은 점선 (Rule)
                 chart_df = pd.DataFrame({"순번": range(1, len(data_s)+1), "강도": sorted(data_s)})
                 
                 bars = alt.Chart(chart_df).mark_bar().encode(
                     x=alt.X('순번:O'), y=alt.Y('강도:Q'),
                     color=alt.condition(alt.datum.강도 < design_fck_stats, alt.value('#FF6B6B'), alt.value('#4D96FF'))
                 )
-                rule = alt.Chart(pd.DataFrame({'y': [design_fck_stats]})).mark_rule(color='red', strokeDash=[4,2]).encode(y='y')
+                rule = alt.Chart(pd.DataFrame({'y': [design_fck_stats]})).mark_rule(
+                    color='red', strokeDash=[5, 3]
+                ).encode(y='y')
                 
                 st.altair_chart(bars + rule, use_container_width=True)
                 
@@ -397,5 +392,3 @@ with tab3:
 
         except:
             st.error("입력 오류")
-
-
