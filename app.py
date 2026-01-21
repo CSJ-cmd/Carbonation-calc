@@ -250,7 +250,9 @@ with tab2:
                         use_container_width=True, hide_index=True
                     )
 
+# ============================================
     # [Mode B] 다중 지점 직접 입력 (Batch)
+    # ============================================
     elif mode == "다중 입력 (Batch)":
         with st.expander("ℹ️ 사용법 및 데이터 붙여넣기", expanded=True):
             st.caption("엑셀 복사: `지점명` `각도` `재령` `설계강도` `측정값20개`")
@@ -299,7 +301,7 @@ with tab2:
                 "지점": st.column_config.TextColumn("지점", width="small"),
                 "각도": st.column_config.SelectboxColumn("각도", options=[-90, -45, 0, 45, 90], width="small", required=True),
                 "재령": st.column_config.NumberColumn("재령", width="small"),
-                "설계강도": st.column_config.NumberColumn("설계강도", width="small"),
+                "설계": st.column_config.NumberColumn("설계", width="small"),
                 "데이터": st.column_config.TextColumn("측정값", width="large")
             },
             hide_index=True, num_rows="dynamic", use_container_width=True
@@ -319,11 +321,17 @@ with tab2:
                         try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
                         except: readings = []
 
-                        success, res = calculate_strength(readings, row["각도"], row["재령"], row["설계"])
+                        # [수정] 설계강도 오류 방지 (빈 값일 경우 24.0으로 대체)
+                        try:
+                            design_fck = float(row["설계"]) if pd.notnull(row["설계"]) else 24.0
+                        except:
+                            design_fck = 24.0
+
+                        success, res = calculate_strength(readings, row["각도"], row["재령"], design_fck)
                         
                         entry = {
                             "지점": row["지점"], 
-                            "설계": row["설계"], 
+                            "설계": design_fck, 
                             "결과": "실패", 
                             "평균강도": 0.0, 
                             "등급": "-",
@@ -332,7 +340,7 @@ with tab2:
                         
                         if success:
                             s_mean = res["Mean_Strength"]
-                            ratio = (s_mean / row["설계"]) * 100 if row["설계"] > 0 else 0
+                            ratio = (s_mean / design_fck) * 100 if design_fck > 0 else 0
                             grade_mk = "A" if ratio >= 100 else ("B" if ratio >= 90 else ("C" if ratio >= 75 else "D/E"))
                             
                             entry.update({
@@ -391,7 +399,7 @@ with tab2:
                         use_container_width=True, hide_index=True
                     )
                     st.download_button("CSV 저장", convert_df(df_final[cols]), f"{project_name}_Batch.csv", "text/csv", use_container_width=True)
-
+                    
     # [Mode C] 파일 업로드
     elif mode == "파일 업로드":
         with st.container(border=True):
@@ -470,4 +478,5 @@ with tab3:
 
         except:
             st.error("입력 오류")
+
 
