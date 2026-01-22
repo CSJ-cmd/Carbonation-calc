@@ -69,30 +69,42 @@ def get_age_coefficient(days):
     return 1.0
 
 def calculate_strength(readings, angle, days, design_fck=24.0):
-    """ 강도 산정 로직 """
+    """ 강도 산정 로직 (제외된 값 및 평균 R 반환 추가) """
     if len(readings) < 5: return False, "데이터 부족 (5개 미만)"
     
-    # 이상치 제거
+    # 1. 1차 평균 계산
     avg1 = sum(readings) / len(readings)
-    valid = [r for r in readings if avg1*0.8 <= r <= avg1*1.2]
-    discard_cnt = len(readings) - len(valid)
     
-    if len(readings) >= 20 and discard_cnt > 4: return False, f"시험 무효 (기각 {discard_cnt}개)"
+    # 2. 이상치 제거 (±20%)
+    valid = []
+    excluded = [] # 제외된 값 저장 리스트
+    for r in readings:
+        if avg1 * 0.8 <= r <= avg1 * 1.2:
+            valid.append(r)
+        else:
+            excluded.append(r)
+            
+    discard_cnt = len(excluded)
+    
+    if len(readings) >= 20 and discard_cnt > 4: return False, f"시험 무효 (기각 {discard_cnt}개, 20% 초과)"
     if not valid: return False, "유효 데이터 없음"
         
+    # 3. 유효 반발경도 평균 (R_final)
     R_final = sum(valid) / len(valid)
+    
+    # 4. 보정 (타격방향, 재령)
     corr = get_angle_correction(R_final, angle)
     R0 = R_final + corr
     age_c = get_age_coefficient(days)
     
-    # 5가지 추정식 계산
+    # 5. 강도 추정식 계산
     f_aij = max(0, (7.3 * R0 + 100) * 0.098 * age_c)        
     f_jsms = max(0, (1.27 * R0 - 18.0) * age_c)             
     f_mst = max(0, (15.2 * R0 - 112.8) * 0.098 * age_c)     
     f_kwon = max(0, (2.304 * R0 - 38.80) * age_c)           
     f_kalis = max(0, (1.3343 * R0 + 8.1977) * age_c)
     
-    # 설계강도 기준 평균값 계산용
+    # 설계강도 기준 평균값
     target_values = []
     if design_fck < 40:
         target_values = [f_aij, f_jsms] # 일반강도
@@ -102,7 +114,11 @@ def calculate_strength(readings, angle, days, design_fck=24.0):
     s_mean = np.mean(target_values) if target_values else 0
     
     return True, {
-        "R_avg": R_final, "R0": R0, "Age_Coeff": age_c,
+        "R_avg": R_final,       # 유효 평균 R
+        "R_initial": avg1,      # 1차 평균 (참고용)
+        "Excluded": excluded,   # 제외된 값 리스트
+        "R0": R0, 
+        "Age_Coeff": age_c,
         "Discard": discard_cnt, 
         "Formulas": {
             "일본건축": f_aij,
@@ -215,6 +231,18 @@ with tab2:
                 
                 with st.container(border=True):
                     st.success(f"평균: **{s_mean:.2f} MPa** (설계비: **{ratio:.1f}%**)")
+                    
+                    # [NEW] 분석 상세 정보 표시
+                    with st.expander("ℹ️ 상세 분석 데이터 (기각값 확인)", expanded=True):
+                        col_d1, col_d2 = st.columns(2)
+                        col_d1.metric("유효 평균 R", f"{res['R_avg']:.1f}")
+                        col_d2.metric("기각된 데이터 수", f"{res['Discard']}개")
+                        
+                        if res['Discard'] > 0:
+                            st.warning(f"🚫 제외된 R값: {res['Excluded']}")
+                        else:
+                            st.info("✅ 기각된 데이터 없음 (모두 유효)")
+                    
                     st.caption(f"ℹ️ 적용 기준: {applied_type} 공식 자동 선택됨")
                     
                     df_res = pd.DataFrame({
@@ -253,7 +281,6 @@ with tab2:
                 "Raw Data", height=100, placeholder="P1 0 1000 24 55 56 ...", label_visibility="collapsed"
             )
 
-        # 초기 데이터 파싱
         initial_data = []
         if batch_input.strip():
             lines = batch_input.strip().split('\n')
@@ -314,7 +341,6 @@ with tab2:
                         try: readings = [float(x) for x in raw_str.split() if x.replace('.','',1).isdigit()]
                         except: readings = []
 
-                        # 설계강도 오류 방지
                         try: design_fck = float(row["설계"]) if pd.notnull(row["설계"]) else 24.0
                         except: design_fck = 24.0
 
@@ -322,7 +348,9 @@ with tab2:
                         
                         entry = {
                             "지점": row["지점"], "설계": design_fck, "결과": "실패", 
-                            "평균강도": 0.0, "강도비(%)": 0.0, # 등급 대신 강도비
+                            "유효평균R": 0.0, # 평균 R값 추가
+                            "제외된값": "",   # 제외된 값 추가
+                            "평균강도": 0.0, "강도비(%)": 0.0,
                             "일본건축": 0.0, "일본재료": 0.0, "과기부": 0.0, "권영웅": 0.0, "KALIS": 0.0
                         }
                         
@@ -332,6 +360,8 @@ with tab2:
                             
                             entry.update({
                                 "결과": "성공", 
+                                "유효평균R": round(res["R_avg"], 1),
+                                "제외된값": str(res["Excluded"]) if res["Excluded"] else "-", # 리스트를 문자열로
                                 "평균강도": round(s_mean, 2), 
                                 "강도비(%)": round(ratio, 1),
                                 "일본건축": round(res["Formulas"]["일본건축"], 1),
@@ -349,7 +379,6 @@ with tab2:
                     
                     st.markdown("### 📊 분석 결과 그래프")
                     
-                    # 그래프
                     base_b = alt.Chart(df_final).encode(x=alt.X('지점', sort=None))
                     bars_b = base_b.mark_bar().encode(
                         y=alt.Y('평균강도', title='평균강도 (MPa)'),
@@ -366,12 +395,12 @@ with tab2:
                     
                     st.altair_chart(bars_b + ticks_b, use_container_width=True)
 
-                    # 결과 테이블 (강도비(%) 표시)
-                    cols = ["지점", "설계", "평균강도", "강도비(%)", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
+                    # [NEW] 결과 테이블에 '유효평균R', '제외된값' 추가
+                    cols = ["지점", "유효평균R", "제외된값", "설계", "평균강도", "강도비(%)", "일본건축", "일본재료", "과기부", "권영웅", "KALIS"]
                     
-                    # 강도비(%)가 100 미만인 경우 텍스트를 빨간색으로 표시
                     st.dataframe(
                         df_final[cols].style.format({
+                            "유효평균R": "{:.1f}",
                             "평균강도": "{:.2f}", 
                             "설계": "{:.1f}", 
                             "강도비(%)": "{:.1f}%",
