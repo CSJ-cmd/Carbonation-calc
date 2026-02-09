@@ -115,8 +115,8 @@ with st.sidebar:
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
-# 탭 순서 변경: 매뉴얼 -> 탄산화 -> 반발경도 -> 통계
-tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
+# [탭 순서 변경] 1. 매뉴얼, 2. 반발경도, 3. 탄산화, 4. 통계
+tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "🧪 탄산화", "📈 통계·비교"])
 
 # ---------------------------------------------------------
 # [Tab 1] 점검 매뉴얼
@@ -129,7 +129,6 @@ with tab1:
         #### **📍 타격 방향 보정 (Angle Correction)**
         타격 각도($\\alpha$)에 따라 중력 오차를 보정하며, 본 프로그램은 아래 지침을 자동 적용합니다.
         """)
-        
         m_df = pd.DataFrame({
             "구분": ["상향 수직", "상향 경사", "수평 타격", "하향 경사", "하향 수직"],
             "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
@@ -150,7 +149,6 @@ with tab1:
         - 속도계수 $A = C / \\sqrt{t}$
         - 예측수명 $T = (Cover / A)^2$
         """)
-        
 
     with st.expander("3. 철근 부식도 (자연전위법 기준)"):
         st.markdown("""
@@ -160,36 +158,10 @@ with tab1:
         """)
 
 # ---------------------------------------------------------
-# [Tab 2] 탄산화 평가
+# [Tab 2] 반발경도 평가 (순서 변경됨)
 # ---------------------------------------------------------
 with tab2:
-    st.subheader("탄산화 깊이 및 상세 분석")
-    with st.container(border=True):
-        c1, c2, c3 = st.columns(3)
-        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0)
-        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
-        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20)
-            
-    if st.button("평가 실행", type="primary", key="btn_carb", use_container_width=True):
-        rem = d_cover - m_depth
-        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
-        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
-        res_life = total_life - a_years
-        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
-        
-        st.markdown(f"### 결과: :{color}[{grade} 등급]")
-        with st.container(border=True):
-            cc1, cc2, cc3 = st.columns(3)
-            cc1.metric("잔여 피복량", f"{rem:.1f} mm")
-            cc2.metric("속도 계수 (A)", f"{rate_a:.3f}")
-            cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
-            st.info(f"**계산 근거:** $A = {m_depth} / \\sqrt{{{a_years}}} = {rate_a:.3f}$, 한계수명 $T = ({d_cover}/{rate_a:.3f})^2 = {total_life:.1f}$년")
-
-# ---------------------------------------------------------
-# [Tab 3] 반발경도 평가
-# ---------------------------------------------------------
-with tab3:
-    st.subheader("반발경도 정밀 강도 산정")
+    st.subheader("🔨 반발경도 정밀 강도 산정")
     mode = st.radio("입력 방식", ["단일 지점", "다중 지점 (Batch/File)"], horizontal=True)
 
     if mode == "단일 지점":
@@ -213,11 +185,20 @@ with tab3:
                     m4.metric("재령 계수 α", f"{res['Age_Coeff']:.2f}")
                 
                 df_f = pd.DataFrame({"공식": res["Formulas"].keys(), "강도": res["Formulas"].values()})
+                
+                # [그래프 시인성 강화] 바 차트 + 설계기준강도 빨간 점선 추가
                 chart = alt.Chart(df_f).mark_bar().encode(
                     x=alt.X('공식', sort=None), y='강도',
                     color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
-                ).properties(height=300)
-                st.altair_chart(chart, use_container_width=True)
+                ).properties(height=350)
+                
+                # 빨간 점선(Rule) 생성
+                rule = alt.Chart(pd.DataFrame({'y': [fck]})).mark_rule(
+                    color='red', strokeDash=[5, 3], size=2
+                ).encode(y='y')
+                
+                # 레이어 결합
+                st.altair_chart(chart + rule, use_container_width=True)
 
     else:
         st.markdown("#### 📂 파일 업로드 또는 테이블 직접 입력")
@@ -270,13 +251,39 @@ with tab3:
                 st.download_button("결과 CSV 저장", convert_df(final_res_df), "Batch_Result.csv", "text/csv", use_container_width=True)
 
 # ---------------------------------------------------------
+# [Tab 3] 탄산화 평가 (순서 변경됨)
+# ---------------------------------------------------------
+with tab3:
+    st.subheader("🧪 탄산화 깊이 및 상세 분석")
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0, key="carb_m_depth")
+        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0, key="carb_d_cover")
+        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20, key="carb_a_years")
+            
+    if st.button("평가 실행", type="primary", key="btn_carb_run", use_container_width=True):
+        rem = d_cover - m_depth
+        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
+        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
+        res_life = total_life - a_years
+        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
+        
+        st.markdown(f"### 결과: :{color}[{grade} 등급]")
+        with st.container(border=True):
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("잔여 피복량", f"{rem:.1f} mm")
+            cc2.metric("속도 계수 (A)", f"{rate_a:.3f}")
+            cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
+            st.info(f"**계산 근거:** $A = {m_depth} / \\sqrt{{{a_years}}} = {rate_a:.3f}$, 한계수명 $T = ({d_cover}/{rate_a:.3f})^2 = {total_life:.1f}$년")
+
+# ---------------------------------------------------------
 # [Tab 4] 통계 및 비교
 # ---------------------------------------------------------
 with tab4:
     st.subheader("📊 강도 통계 및 분포 분석")
     c1, c2 = st.columns([1, 3])
     with c1: st_fck = st.number_input("기준 설계강도(MPa)", 15.0, 100.0, 24.0, key="stat_fck_v2")
-    with c2: st_txt = st.text_area("강도 데이터 (MPa)", "24.5 26.2 23.1 21.8 25.5 27.0 24.1 23.9", height=68)
+    with c2: st_txt = st.text_area("강도 데이터 (MPa)", "24.5 26.2 23.1 21.8 25.5 27.0 24.1 23.9", height=68, key="stat_txt_v2")
     
     if st.button("통계 분석 실행", key="btn_st_v2", use_container_width=True):
         data = sorted([float(x) for x in st_txt.replace(',',' ').split() if x.strip()])
@@ -296,8 +303,8 @@ with tab4:
                 x='번호:O', y='강도:Q',
                 color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
             )
-            
-            st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3]).encode(y='y'), use_container_width=True)
+            st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3], size=2).encode(y='y'), use_container_width=True)
+
 
 
 
