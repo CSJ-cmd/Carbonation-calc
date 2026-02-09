@@ -33,10 +33,8 @@ st.markdown("""
 
 def get_angle_correction(R_val, angle):
     """ 타격 방향 보정값 (세부지침 기준) """
-    try:
-        angle = int(angle)
-    except:
-        angle = 0
+    try: angle = int(angle)
+    except: angle = 0
     correction_table = {
         -90: {20: +3.2, 30: +3.1, 40: +2.7, 50: +2.2, 60: +1.7}, 
         -45: {20: +2.4, 30: +2.3, 40: +2.0, 50: +1.6, 60: +1.3}, 
@@ -55,12 +53,8 @@ def get_angle_correction(R_val, angle):
 
 def get_age_coefficient(days):
     """ 재령 보정계수 (지침 기준) """
-    # [수정] 데이터 오류 시 기본값을 3000.0일로 변경
-    try:
-        days = float(days)
-    except (TypeError, ValueError):
-        days = 3000.0
-
+    try: days = float(days)
+    except: days = 3000.0
     age_table = {
         10: 1.55, 20: 1.12, 28: 1.00, 50: 0.87,
         100: 0.78, 150: 0.74, 200: 0.72, 300: 0.70,
@@ -78,17 +72,12 @@ def get_age_coefficient(days):
 
 def calculate_strength(readings, angle, days, design_fck=24.0):
     """ 반발경도 강도 산정 메인 로직 """
-    if not readings or len(readings) < 5: return False, "데이터 부족 (5개 미만)"
-    
+    if not readings or len(readings) < 5: return False, "데이터 부족"
     avg1 = sum(readings) / len(readings)
     valid = [r for r in readings if avg1 * 0.8 <= r <= avg1 * 1.2]
     excluded = [r for r in readings if r not in valid]
-    
-    discard_cnt = len(excluded)
-    if len(readings) >= 20 and discard_cnt > 4: 
-        return False, f"시험 무효 (기각 {discard_cnt}개, 20% 초과)"
+    if len(readings) >= 20 and len(excluded) > 4: return False, f"시험 무효 (기각 {len(excluded)}개)"
     if not valid: return False, "유효 데이터 없음"
-        
     R_avg = sum(valid) / len(valid)
     corr = get_angle_correction(R_avg, angle)
     R0 = R_avg + corr
@@ -105,8 +94,8 @@ def calculate_strength(readings, angle, days, design_fck=24.0):
     
     return True, {
         "R_initial": avg1, "R_avg": R_avg, "Angle_Corr": corr, "R0": R0, 
-        "Age_Coeff": age_c, "Discard": discard_cnt, "Excluded": excluded,
-        "Formulas": {"일본건축(AIJ)": f_aij, "일본재료(JSMS)": f_jsms, "과기부(MST)": f_mst, "권영웅": f_kwon, "KALIS": f_kalis},
+        "Age_Coeff": age_c, "Discard": len(excluded), "Excluded": excluded,
+        "Formulas": {"일본건축": f_aij, "일본재료": f_jsms, "과기부": f_mst, "권영웅": f_kwon, "KALIS": f_kalis},
         "Mean_Strength": s_mean
     }
 
@@ -127,7 +116,7 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "🧪 탄산화", "📈 통계·비교"])
 
-# [Tab 1] 매뉴얼
+# [Tab 1] 점검 매뉴얼
 with tab1:
     st.subheader("📋 시설물 안전점검·진단 가이드 (요약)")
     with st.expander("1. 반발경도시험 타격 방향 및 보정", expanded=True):
@@ -142,7 +131,7 @@ with tab1:
         st.markdown("#### **✅ 등급 판정 기준 (잔여 피복 두께)**")
         st.write("- **A 등급**: $\ge 30mm$ / **B 등급**: $\ge 10mm$ / **C 등급**: $\ge 0mm$ / **D 등급**: $< 0mm$")
 
-# [Tab 2] 반발경도 (기본값 3000 반영)
+# [Tab 2] 반발경도 평가 (Batch 결과 그래프 및 세부 탭 추가)
 with tab2:
     st.subheader("🔨 반발경도 정밀 강도 산정")
     mode = st.radio("입력 방식", ["단일 지점", "다중 지점 (Batch/File)"], horizontal=True)
@@ -151,7 +140,6 @@ with tab2:
         with st.container(border=True):
             c1, c2, c3 = st.columns(3)
             with c1: angle = st.selectbox("타격 방향", [90, 45, 0, -45, -90], format_func=lambda x: {90:"+90°(상향수직)", 45:"+45°(상향경사)", 0:"0°(수평)", -45:"-45°(하향경사)", -90:"-90°(하향수직)"}[x])
-            # [수정] 단일 입력 기본값을 3000으로 설정
             with c2: days = st.number_input("재령(일)", 10, 10000, 3000)
             with c3: fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
             txt = st.text_area("측정값 (공백/줄바꿈 구분)", "54 56 55 53 58 55 54 55 52 57 55 56 54 55 59 42 55 56 54 55", height=80)
@@ -180,20 +168,10 @@ with tab2:
             try:
                 df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 for _, row in df_up.iterrows():
-                    init_data.append({
-                        "선택": True, 
-                        "지점": row.get("지점", "P"), 
-                        "각도": row.get("각도", 0), 
-                        # [수정] 파일 업로드 시 재령 정보가 없으면 3000 적용
-                        "재령": row.get("재령", 3000), 
-                        "설계": row.get("설계", 24.0), 
-                        "데이터": str(row.get("데이터", ""))
-                    })
+                    init_data.append({"선택": True, "지점": row.get("지점", "P"), "각도": row.get("각도", 0), "재령": row.get("재령", 3000), "설계": row.get("설계", 24.0), "데이터": str(row.get("데이터", ""))})
             except: st.error("파일 파싱 실패")
 
         df_batch = pd.DataFrame(init_data) if init_data else pd.DataFrame(columns=["선택","지점","각도","재령","설계","데이터"])
-        
-        # [수정] 테이블 에디터의 기본값(default)을 3000으로 설정
         edited_df = st.data_editor(
             df_batch,
             column_config={
@@ -209,35 +187,61 @@ with tab2:
             batch_res = []
             for _, row in edited_df.iterrows():
                 if not row["선택"]: continue
-                
                 try:
                     rd_list = [float(x) for x in str(row["데이터"]).replace(',',' ').split() if x.replace('.','',1).isdigit()]
-                    # [수정] 테이블 행이 비어있을 경우 방어 로직 (기본값 3000 적용)
-                    ang_val = 0 if pd.isna(row["각도"]) else row["각도"]
-                    age_val = 3000 if pd.isna(row["재령"]) else row["재령"]
-                    fck_val = 24 if pd.isna(row["설계"]) else row["설계"]
-                    
-                    ok, res = calculate_strength(rd_list, ang_val, age_val, fck_val)
+                    ang_v = 0 if pd.isna(row["각도"]) else row["각도"]
+                    age_v = 3000 if pd.isna(row["재령"]) else row["재령"]
+                    fck_v = 24 if pd.isna(row["설계"]) else row["설계"]
+                    ok, res = calculate_strength(rd_list, ang_v, age_v, fck_v)
                     if ok:
-                        batch_res.append({
-                            "지점": row["지점"], "R0": round(res["R0"], 1), "설계": fck_val, 
-                            "추정강도": round(res["Mean_Strength"], 2), 
-                            "강도비(%)": round((res["Mean_Strength"]/fck_val)*100, 1) if fck_val > 0 else 0
-                        })
-                except:
-                    continue
+                        data_entry = {
+                            "지점": row["지점"], "설계": fck_v, "추정강도": round(res["Mean_Strength"], 2), 
+                            "강도비(%)": round((res["Mean_Strength"]/fck_v)*100, 1),
+                            "유효평균R": round(res["R_avg"], 1), "보정R0": round(res["R0"], 1),
+                            "재령계수": round(res["Age_Coeff"], 2), "기각수": res["Discard"], "기각데이터": str(res["Excluded"])
+                        }
+                        # 공식별 결과 추가
+                        for f_name, f_val in res["Formulas"].items(): data_entry[f_name] = round(f_val, 1)
+                        batch_res.append(data_entry)
+                except: continue
 
             if batch_res:
-                st.dataframe(pd.DataFrame(batch_res), use_container_width=True, hide_index=True)
+                final_df = pd.DataFrame(batch_res)
+                
+                # 1. 다중 지점 결과 그래프 (추정강도 & 강도비)
+                st.markdown("#### 📊 일괄 분석 결과 요약 그래프")
+                c_strength = alt.Chart(final_df).mark_bar().encode(
+                    x=alt.X('지점', sort=None), y=alt.Y('추정강도', title='추정강도 (MPa)'),
+                    color=alt.condition(alt.datum.추정강도 >= alt.datum.설계, alt.value('#4D96FF'), alt.value('#FF6B6B')),
+                    tooltip=['지점', '설계', '추정강도', '강도비(%)']
+                ).properties(height=300, title="지점별 추정강도 (빨간 선: 설계강도)")
+                c_rule = alt.Chart(final_df).mark_tick(color='red', thickness=3, size=40).encode(x='지점', y='설계')
+                
+                c_ratio = alt.Chart(final_df).mark_line(point=True).encode(
+                    x=alt.X('지점', sort=None), y=alt.Y('강도비(%)', title='강도비 (%)'),
+                    color=alt.value('#FFA500'), tooltip=['지점', '강도비(%)']
+                ).properties(height=200, title="지점별 설계 대비 강도비(%)")
+                
+                st.altair_chart(c_strength + c_rule, use_container_width=True)
+                st.altair_chart(c_ratio, use_container_width=True)
 
-# [Tab 3, 4] 기존과 동일 유지
+                # 2. 결과 테이블 (종합 및 세부 계산 결과 탭)
+                res_tab1, res_tab2 = st.tabs(["📋 종합 결과 요약", "🔍 세부 계산 데이터"])
+                with res_tab1:
+                    st.dataframe(final_df[["지점", "설계", "추정강도", "강도비(%)"]], use_container_width=True, hide_index=True)
+                with res_tab2:
+                    st.dataframe(final_df, use_container_width=True, hide_index=True)
+                
+                st.download_button("결과 CSV 저장", convert_df(final_df), "SafePro_Batch_Result.csv", "text/csv", use_container_width=True)
+
+# [Tab 3] 탄산화 평가
 with tab3:
     st.subheader("🧪 탄산화 깊이 및 상세 분석")
     c1, c2, c3 = st.columns(3)
     with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0, key="c_m")
     with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0, key="c_d")
     with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20, key="c_a")
-    if st.button("평가 실행", key="carb_btn"):
+    if st.button("평가 실행", key="carb_btn", use_container_width=True):
         rem = d_cover - m_depth
         rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
         total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
@@ -248,12 +252,13 @@ with tab3:
             cc1, cc2, cc3 = st.columns(3)
             cc1.metric("잔여 피복량", f"{rem:.1f} mm"); cc2.metric("속도 계수 (A)", f"{rate_a:.3f}"); cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
 
+# [Tab 4] 통계 및 비교
 with tab4:
     st.subheader("📈 통계 및 비교 분석")
     c1, c2 = st.columns([1, 3])
     with c1: st_fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="s_f")
     with c2: st_txt = st.text_area("강도 리스트", "24.5 26.2 23.1 21.8 25.5 27.0", key="s_t")
-    if st.button("통계 실행"):
+    if st.button("통계 실행", use_container_width=True):
         data = sorted([float(x) for x in st_txt.replace(',',' ').split() if x.strip()])
         if len(data) >= 2:
             avg_v = np.mean(data); std_v = np.std(data, ddof=1); cv_v = (std_v / avg_v * 100) if avg_v > 0 else 0
@@ -263,7 +268,6 @@ with tab4:
             st_df = pd.DataFrame({"번호": range(1, len(data)+1), "강도": data})
             s_chart = alt.Chart(st_df).mark_bar().encode(x='번호:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
             st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3], size=2).encode(y='y'), use_container_width=True)
-
 
 
 
