@@ -202,6 +202,26 @@ with tab2:
         # ... [이하 기존 Batch 로직 생략] ...
 
 # ---------------------------------------------------------
+# [Tab 3] 통계 및 비교
+# ---------------------------------------------------------
+with tab3:
+    st.subheader("강도 통계 분석")
+    c1, c2 = st.columns([1, 3])
+    with c1: st_fck = st.number_input("기준 설계강도", 15.0, 100.0, 24.0)
+    with c2: st_txt = st.text_area("강도 데이터 목록 (MPa)", "24.5 26.2 23.1 21.8 25.5 27.0", height=68)
+    
+    if st.button("분석 실행", key="btn_st", use_container_width=True):
+        data = sorted([float(x) for x in st_txt.replace(',',' ').split() if x.strip()])
+        if len(data) >= 2:
+            st.metric("평균 강도", f"{np.mean(data):.2f} MPa", delta=f"{(np.mean(data)/st_fck*100):.1f}%")
+            
+            # 통계 차트 (정렬된 데이터)
+            st_df = pd.DataFrame({"순번": range(1, len(data)+1), "강도": data})
+            s_bars = alt.Chart(st_df).mark_bar().encode(x='순번:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
+            s_rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='red', strokeDash=[5,3]).encode(y='y')
+            st.altair_chart(s_bars + s_rule, use_container_width=True)
+
+# ---------------------------------------------------------
 # [Tab 4] 점검 매뉴얼 (개선 및 신설 항목)
 # ---------------------------------------------------------
 with tab4:
@@ -249,3 +269,4 @@ with tab4:
         - **$-200mV \ge E > -350mV$**: 부식 여부 불확실
         - **$E \le -350mV$**: 부식 가능성 매우 높음 (90% 이상)
         """)
+
