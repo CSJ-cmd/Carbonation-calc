@@ -24,6 +24,7 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
     .calc-box { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #1f77b4; margin-bottom: 15px; }
+    .usage-box { background-color: #e1f5fe; padding: 20px; border-radius: 10px; border: 1px solid #01579b; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -114,24 +115,49 @@ with st.sidebar:
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
+# 탭 순서: 매뉴얼 -> 반발경도 -> 탄산화 -> 통계
 tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "🧪 탄산화", "📈 통계·비교"])
 
-# [Tab 1] 점검 매뉴얼
+# ---------------------------------------------------------
+# [Tab 1] 점검 매뉴얼 (프로그램 사용법 추가)
+# ---------------------------------------------------------
 with tab1:
+    st.subheader("💡 프로그램 사용 가이드")
+    
+    # [NEW] 프로그램 사용법 최상단 추가
+    st.info("""
+    **1. 반발경도 산정 시 설계기준강도를 정확히 입력해주세요.**
+    * 설계기준강도를 바탕으로 일반강도(<40MPa)와 고강도(≥40MPa)에 적합한 공식 적용 로직이 자동으로 변경됩니다.
+
+    **2. 타격방향 보정 값을 매뉴얼을 참고하여 정확히 선택해주세요.**
+    * 측정 위치가 상향 타격(천장)인지 하향 타격(바닥)인지에 따라 중력 보정값이 달라집니다.
+
+    **3. 기본값 적용 안내 (미입력 시)**
+    * 재령이나 설계강도를 별도로 입력하지 않을 경우, 시스템상에서 **재령 3000일**, **설계기준강도 24MPa**가 기본 적용됩니다.
+    """)
+
+    st.divider()
     st.subheader("📋 시설물 안전점검·진단 가이드 (요약)")
+    
     with st.expander("1. 반발경도시험 타격 방향 및 보정", expanded=True):
         st.markdown("#### **📍 타격 방향 보정 (Angle Correction)**")
+        
         m_df = pd.DataFrame({
             "구분": ["상향 수직", "상향 경사", "수평 타격", "하향 경사", "하향 수직"],
             "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
             "부재 예시": ["슬래브 하부", "보 경사면", "벽체, 기둥", "교대 경사", "슬래브 상면"]
         })
         st.table(m_df)
+        st.info("보정 순서: 측정값 추출 → ±20% 이상치 기각 → 각도 보정($R_0$) → 재령 보정($\\alpha$)")
+
     with st.expander("2. 탄산화 깊이 및 등급 판정"):
         st.markdown("#### **✅ 등급 판정 기준 (잔여 피복 두께)**")
         st.write("- **A 등급**: $\ge 30mm$ / **B 등급**: $\ge 10mm$ / **C 등급**: $\ge 0mm$ / **D 등급**: $< 0mm$")
+        
 
-# [Tab 2] 반발경도 평가 (Batch 결과 그래프 및 세부 탭 추가)
+# ---------------------------------------------------------
+# [Tab 2] 반발경도 평가
+# ---------------------------------------------------------
 with tab2:
     st.subheader("🔨 반발경도 정밀 강도 산정")
     mode = st.radio("입력 방식", ["단일 지점", "다중 지점 (Batch/File)"], horizontal=True)
@@ -194,47 +220,26 @@ with tab2:
                     fck_v = 24 if pd.isna(row["설계"]) else row["설계"]
                     ok, res = calculate_strength(rd_list, ang_v, age_v, fck_v)
                     if ok:
-                        data_entry = {
-                            "지점": row["지점"], "설계": fck_v, "추정강도": round(res["Mean_Strength"], 2), 
-                            "강도비(%)": round((res["Mean_Strength"]/fck_v)*100, 1),
-                            "유효평균R": round(res["R_avg"], 1), "보정R0": round(res["R0"], 1),
-                            "재령계수": round(res["Age_Coeff"], 2), "기각수": res["Discard"], "기각데이터": str(res["Excluded"])
-                        }
-                        # 공식별 결과 추가
+                        data_entry = {"지점": row["지점"], "설계": fck_v, "추정강도": round(res["Mean_Strength"], 2), "강도비(%)": round((res["Mean_Strength"]/fck_v)*100, 1), "유효평균R": round(res["R_avg"], 1), "보정R0": round(res["R0"], 1), "재령계수": round(res["Age_Coeff"], 2), "기각수": res["Discard"], "기각데이터": str(res["Excluded"])}
                         for f_name, f_val in res["Formulas"].items(): data_entry[f_name] = round(f_val, 1)
                         batch_res.append(data_entry)
                 except: continue
 
             if batch_res:
                 final_df = pd.DataFrame(batch_res)
-                
-                # 1. 다중 지점 결과 그래프 (추정강도 & 강도비)
-                st.markdown("#### 📊 일괄 분석 결과 요약 그래프")
-                c_strength = alt.Chart(final_df).mark_bar().encode(
-                    x=alt.X('지점', sort=None), y=alt.Y('추정강도', title='추정강도 (MPa)'),
-                    color=alt.condition(alt.datum.추정강도 >= alt.datum.설계, alt.value('#4D96FF'), alt.value('#FF6B6B')),
-                    tooltip=['지점', '설계', '추정강도', '강도비(%)']
-                ).properties(height=300, title="지점별 추정강도 (빨간 선: 설계강도)")
+                st.markdown("#### 📊 일괄 분석 요약")
+                c_strength = alt.Chart(final_df).mark_bar().encode(x=alt.X('지점', sort=None), y='추정강도', color=alt.condition(alt.datum.추정강도 >= alt.datum.설계, alt.value('#4D96FF'), alt.value('#FF6B6B')))
                 c_rule = alt.Chart(final_df).mark_tick(color='red', thickness=3, size=40).encode(x='지점', y='설계')
-                
-                c_ratio = alt.Chart(final_df).mark_line(point=True).encode(
-                    x=alt.X('지점', sort=None), y=alt.Y('강도비(%)', title='강도비 (%)'),
-                    color=alt.value('#FFA500'), tooltip=['지점', '강도비(%)']
-                ).properties(height=200, title="지점별 설계 대비 강도비(%)")
-                
                 st.altair_chart(c_strength + c_rule, use_container_width=True)
-                st.altair_chart(c_ratio, use_container_width=True)
 
-                # 2. 결과 테이블 (종합 및 세부 계산 결과 탭)
-                res_tab1, res_tab2 = st.tabs(["📋 종합 결과 요약", "🔍 세부 계산 데이터"])
-                with res_tab1:
-                    st.dataframe(final_df[["지점", "설계", "추정강도", "강도비(%)"]], use_container_width=True, hide_index=True)
-                with res_tab2:
-                    st.dataframe(final_df, use_container_width=True, hide_index=True)
-                
-                st.download_button("결과 CSV 저장", convert_df(final_df), "SafePro_Batch_Result.csv", "text/csv", use_container_width=True)
+                res_tab1, res_tab2 = st.tabs(["📋 종합 요약", "🔍 세부 계산 데이터"])
+                with res_tab1: st.dataframe(final_df[["지점", "설계", "추정강도", "강도비(%)"]], use_container_width=True, hide_index=True)
+                with res_tab2: st.dataframe(final_df, use_container_width=True, hide_index=True)
+                st.download_button("결과 CSV 저장", convert_df(final_df), "Result.csv", "text/csv", use_container_width=True)
 
+# ---------------------------------------------------------
 # [Tab 3] 탄산화 평가
+# ---------------------------------------------------------
 with tab3:
     st.subheader("🧪 탄산화 깊이 및 상세 분석")
     c1, c2, c3 = st.columns(3)
@@ -252,7 +257,9 @@ with tab3:
             cc1, cc2, cc3 = st.columns(3)
             cc1.metric("잔여 피복량", f"{rem:.1f} mm"); cc2.metric("속도 계수 (A)", f"{rate_a:.3f}"); cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
 
+# ---------------------------------------------------------
 # [Tab 4] 통계 및 비교
+# ---------------------------------------------------------
 with tab4:
     st.subheader("📈 통계 및 비교 분석")
     c1, c2 = st.columns([1, 3])
@@ -268,6 +275,4 @@ with tab4:
             st_df = pd.DataFrame({"번호": range(1, len(data)+1), "강도": data})
             s_chart = alt.Chart(st_df).mark_bar().encode(x='번호:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
             st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3], size=2).encode(y='y'), use_container_width=True)
-
-
 
