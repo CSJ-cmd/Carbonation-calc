@@ -115,6 +115,7 @@ with st.sidebar:
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
+# 탭 순서 변경: 매뉴얼 -> 탄산화 -> 반발경도 -> 통계
 tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
 
 # ---------------------------------------------------------
@@ -128,6 +129,7 @@ with tab1:
         #### **📍 타격 방향 보정 (Angle Correction)**
         타격 각도($\\alpha$)에 따라 중력 오차를 보정하며, 본 프로그램은 아래 지침을 자동 적용합니다.
         """)
+        
         m_df = pd.DataFrame({
             "구분": ["상향 수직", "상향 경사", "수평 타격", "하향 경사", "하향 수직"],
             "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
@@ -148,6 +150,7 @@ with tab1:
         - 속도계수 $A = C / \\sqrt{t}$
         - 예측수명 $T = (Cover / A)^2$
         """)
+        
 
     with st.expander("3. 철근 부식도 (자연전위법 기준)"):
         st.markdown("""
@@ -183,7 +186,7 @@ with tab2:
             st.info(f"**계산 근거:** $A = {m_depth} / \\sqrt{{{a_years}}} = {rate_a:.3f}$, 한계수명 $T = ({d_cover}/{rate_a:.3f})^2 = {total_life:.1f}$년")
 
 # ---------------------------------------------------------
-# [Tab 3] 반발경도 평가 (업로드 및 테이블 다중입력 통합)
+# [Tab 3] 반발경도 평가
 # ---------------------------------------------------------
 with tab3:
     st.subheader("반발경도 정밀 강도 산정")
@@ -224,7 +227,6 @@ with tab3:
         with c2:
             st.info("양식: 지점명, 각도, 재령, 설계강도, 측정값들(공백 구분)")
 
-        # 데이터 초기화 로직
         init_data = []
         if uploaded_file:
             try:
@@ -232,7 +234,6 @@ with tab3:
                     df_up = pd.read_csv(uploaded_file)
                 else:
                     df_up = pd.read_excel(uploaded_file)
-                
                 for _, row in df_up.iterrows():
                     init_data.append({
                         "선택": True, "지점": row.get("지점", "P"), "각도": int(row.get("각도", 0)),
@@ -242,7 +243,6 @@ with tab3:
             except Exception as e:
                 st.error(f"파일 파싱 오류: {e}")
 
-        # 에디터 테이블
         df_batch = pd.DataFrame(init_data) if init_data else pd.DataFrame(columns=["선택","지점","각도","재령","설계","데이터"])
         edited_df = st.data_editor(df_batch, use_container_width=True, hide_index=True, num_rows="dynamic")
         
@@ -257,7 +257,6 @@ with tab3:
                         "지점": row["지점"], "각도": row["각도"], "R0": round(res["R0"], 1), "Alpha": round(res["Age_Coeff"], 2),
                         "설계": row["설계"], "추정강도": round(res["Mean_Strength"], 2), "강도비(%)": round((res["Mean_Strength"]/row["설계"])*100, 1)
                     })
-            
             if batch_res:
                 final_res_df = pd.DataFrame(batch_res)
                 st.markdown("#### 📊 일괄 분석 결과 그래프")
@@ -271,7 +270,7 @@ with tab3:
                 st.download_button("결과 CSV 저장", convert_df(final_res_df), "Batch_Result.csv", "text/csv", use_container_width=True)
 
 # ---------------------------------------------------------
-# [Tab 4] 통계 및 비교 (표준편차 포함)
+# [Tab 4] 통계 및 비교
 # ---------------------------------------------------------
 with tab4:
     st.subheader("📊 강도 통계 및 분포 분석")
@@ -297,6 +296,7 @@ with tab4:
                 x='번호:O', y='강도:Q',
                 color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
             )
+            
             st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3]).encode(y='y'), use_container_width=True)
 
 
