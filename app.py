@@ -114,11 +114,11 @@ with st.sidebar:
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
-# 탭 순서: 1.매뉴얼, 2.탄산화, 3.반발경도, 4.통계
-tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
+# 탭 순서: 1. 매뉴얼, 2. 반발경도, 3. 탄산화, 4. 통계
+tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "🧪 탄산화", "📈 통계·비교"])
 
 # ---------------------------------------------------------
-# [Tab 1] 점검 매뉴얼
+# [Tab 1] 점검 매뉴얼 (내용 보강)
 # ---------------------------------------------------------
 with tab1:
     st.subheader("💡 프로그램 사용 가이드")
@@ -130,66 +130,71 @@ with tab1:
 
     **3. 재령 등 별도로 적용하지 않을 시 프로그램상에서 재령 3000일, 설계기준강도 24MPa가 적용됩니다.**
     """)
+    
     st.divider()
-    with st.expander("지침 요약 보기"):
-        st.markdown("#### **📍 타격 방향 보정 (Angle Correction)**")
+    
+    st.subheader("📋 시설물 안전점검·진단 세부지침 매뉴얼")
+
+    with st.expander("1. 반발경도 시험 (Rebound Hardness Test) 상세 지침", expanded=False):
+        st.markdown("""
+        #### **✅ 개요 및 원리**
+        * 콘크리트 표면을 슈미트 해머로 타격하여 반발되는 거리($R$)를 측정하고, 이와 압축강도 사이의 상관관계를 통해 비파괴 강도를 추정합니다.
+        
+        #### **✅ 측정 장소 선정 (지침 기준)**
+        * **부재 두께**: 최소 10cm 이상인 부위를 선정합니다.
+        * **이격 거리**: 부재의 모서리나 끝부분으로부터 3~6cm 이상 떨어진 곳을 타격합니다.
+        * **표면 처리**: 도장재, 요철, 이물질 등을 제거하고 평탄한 콘크리트 면을 노출시킨 후 측정합니다.
+
+        #### **✅ 측정 및 기각 룰**
+        1. **타격 점수**: 1개소당 **20점 이상** 측정을 원칙으로 합니다 (가로·세로 3cm 간격 격자망).
+        2. **이상치 기각**: 전체 측정값의 산술평균을 낸 후, 평균값에서 **±20%를 벗어나는 데이터는 무효**로 처리합니다.
+        3. **시험 무효**: 기각된 데이터가 **5개 이상(20% 초과)**인 경우 해당 측정 지점의 시험은 무효로 보고 재시험을 실시합니다.
+
+        #### **📍 타격 방향 보정 (Angle Correction)**
+        """)
+        
         m_df = pd.DataFrame({
-            "구분": ["상향 수직", "상향 경사", "수평 타격", "하향 경사", "하향 수직"],
-            "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
-            "부재 예시": ["슬래브 하부", "보 경사면", "벽체, 기둥", "교대 경사", "슬래브 상면"]
+            "구분": ["상향 수직 (+90°)", "상향 경사 (+45°)", "수평 타격 (0°)", "하향 경사 (-45°)", "하향 수직 (-90°)"],
+            "대상 부재 예시": ["슬래브 하부 (천장)", "보 경사면", "벽체, 기둥 측면", "교대/교각 경사부", "슬래브 상면 (바닥)"]
         })
         st.table(m_df)
+        st.info("※ 본 프로그램은 위 각도 선택 시 세부지침의 보정표 값을 자동으로 가감($R_0$)합니다.")
+
+    with st.expander("2. 탄산화 깊이 측정 (Carbonation Test) 상세 지침", expanded=False):
+        st.markdown("""
+        #### **✅ 개요 및 측정 방법**
+        * 공기 중의 탄산가스가 콘크리트 내부로 침투하여 알칼리성을 저하시키는 현상을 측정합니다.
+        * **시약**: 1% 페놀프탈레인 용액을 사용합니다.
+        * **측정**: 신선한 콘크리트 파쇄면에 시약을 분무한 후, **적자색으로 변하지 않는 구간(무색)**의 깊이를 0.5mm 단위로 측정합니다.
+
+        #### **✅ 탄산화 속도 및 수명 산식**
+        * **$C = A\sqrt{t}$**
+          - $C$: 탄산화 깊이($mm$)
+          - $A$: 탄산화 속도계수
+          - $t$: 경과 년수(년)
+        * 예측 수명은 설계 피복 두께에 도달하는 시점으로 계산됩니다.
+
+        #### **✅ 등급 판정 기준 (잔여 피복 두께 기반)**
+        * **A (매우 양호)**: 잔여 피복 두께 30mm 이상
+        * **B (양호)**: 잔여 피복 두께 10mm ~ 30mm 미만
+        * **C (보통)**: 잔여 피복 두께 0mm ~ 10mm 미만
+        * **D (불량)**: 탄산화 깊이가 철근 위치를 초과 (잔여 피복 < 0)
+        """)
+        
+
+    with st.expander("3. 철근 부식도 및 기타 비파괴 시험 지침"):
+        st.markdown("""
+        #### **✅ 자연전위법 (철근 부식도)**
+        * **-350mV 이하**: 부식 발생 확률 90% 이상 (매우 높음)
+        * **-200mV ~ -350mV**: 부식 발생 여부 불확실
+        * **-200mV 이상**: 부식 확률 10% 미만 (희박)
+        * 측정 전 콘크리트 표면을 충분히 습윤시켜 전기적 저항을 낮추어야 합니다.
+        """)
 
 # ---------------------------------------------------------
-# [Tab 2] 탄산화 평가 (그래프 추가)
+# [Tab 2] 반발경도 평가 (기존 기능 유지)
 # ---------------------------------------------------------
 with tab2:
-    st.subheader("🧪 탄산화 깊이 및 상세 분석")
-    with st.container(border=True):
-        c1, c2, c3 = st.columns(3)
-        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0)
-        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
-        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20)
-            
-    if st.button("평가 실행", type="primary", key="btn_carb_run", use_container_width=True):
-        rem = d_cover - m_depth
-        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
-        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
-        res_life = total_life - a_years
-        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
-        
-        st.markdown(f"### 결과: :{color}[{grade} 등급]")
-        
-        # 그래프 데이터 생성 (0년~100년까지 예측 곡선)
-        year_steps = np.linspace(0, 100, 101)
-        depth_steps = rate_a * np.sqrt(year_steps)
-        df_plot = pd.DataFrame({'경과년수': year_steps, '탄산화깊이': depth_steps})
-        
-        # Altair 차트 구성
-        
-        line = alt.Chart(df_plot).mark_line(color='#1f77b4').encode(
-            x=alt.X('경과년수:Q', title='경과년수 (년)'),
-            y=alt.Y('탄산화깊이:Q', title='탄산화 깊이 (mm)')
-        )
-        # 설계 피복 가로선
-        rule = alt.Chart(pd.DataFrame({'y': [d_cover]})).mark_rule(color='red', strokeDash=[5,5], size=2).encode(y='y')
-        # 현재 측정점
-        point = alt.Chart(pd.DataFrame({'x': [a_years], 'y': [m_depth]})).mark_point(color='orange', size=100, filled=True).encode(x='x', y='y')
-        
-        st.altair_chart(line + rule + point, use_container_width=True)
-        st.caption("📈 파란선: 탄산화 예측곡선 | 빨간점선: 설계 피복 두께 | 주황점: 현재 측정 시점")
-
-        with st.container(border=True):
-            cc1, cc2, cc3 = st.columns(3)
-            cc1.metric("잔여 피복량", f"{rem:.1f} mm")
-            cc2.metric("속도 계수 (A)", f"{rate_a:.3f}")
-            cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
-            st.info(f"**계산 근거:** $A = {m_depth} / \\sqrt{{{a_years}}} = {rate_a:.3f}$, 잔여수명 $T = ({d_cover}/{rate_a:.3f})^2 - {a_years} = {res_life:.1f}$년")
-
-# ---------------------------------------------------------
-# [Tab 3] 반발경도 평가 (Batch 결과 강화 유지)
-# ---------------------------------------------------------
-with tab3:
     st.subheader("🔨 반발경도 정밀 강도 산정")
     mode = st.radio("입력 방식", ["단일 지점", "다중 지점 (Batch/File)"], horizontal=True)
 
@@ -206,8 +211,15 @@ with tab3:
             ok, res = calculate_strength(rd, angle, days, fck)
             if ok:
                 st.success(f"평균 추정 압축강도: **{res['Mean_Strength']:.2f} MPa**")
+                with st.container(border=True):
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("유효 평균 R", f"{res['R_avg']:.1f}"); m2.metric("각도 보정", f"{res['Angle_Corr']:+.1f}"); m3.metric("최종 R₀", f"{res['R0']:.1f}"); m4.metric("재령 계수 α", f"{res['Age_Coeff']:.2f}")
+                
                 df_f = pd.DataFrame({"공식": res["Formulas"].keys(), "강도": res["Formulas"].values()})
-                chart = alt.Chart(df_f).mark_bar().encode(x=alt.X('공식', sort=None), y='강도', color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
+                chart = alt.Chart(df_f).mark_bar().encode(
+                    x=alt.X('공식', sort=None), y='강도',
+                    color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
+                ).properties(height=350)
                 rule = alt.Chart(pd.DataFrame({'y': [fck]})).mark_rule(color='red', strokeDash=[5, 3], size=2).encode(y='y')
                 st.altair_chart(chart + rule, use_container_width=True)
 
@@ -246,7 +258,42 @@ with tab3:
                 with res_tab2: st.dataframe(final_df, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------
-# [Tab 4] 통계 및 비교
+# [Tab 3] 탄산화 평가 (기존 기능 및 그래프 유지)
+# ---------------------------------------------------------
+with tab3:
+    st.subheader("🧪 탄산화 깊이 및 상세 분석")
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0)
+        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
+        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20)
+            
+    if st.button("평가 실행", type="primary", key="btn_carb_run", use_container_width=True):
+        rem = d_cover - m_depth
+        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
+        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
+        res_life = total_life - a_years
+        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
+        
+        st.markdown(f"### 결과: :{color}[{grade} 등급]")
+        
+        # 탄산화 진행 곡선 그래프
+        y_steps = np.linspace(0, 100, 101)
+        d_steps = rate_a * np.sqrt(y_steps)
+        df_plot = pd.DataFrame({'경과년수': y_steps, '탄산화깊이': d_steps})
+        
+        line = alt.Chart(df_plot).mark_line(color='#1f77b4').encode(x=alt.X('경과년수:Q', title='경과년수 (년)'), y=alt.Y('탄산화깊이:Q', title='탄산화 깊이 (mm)'))
+        rule = alt.Chart(pd.DataFrame({'y': [d_cover]})).mark_rule(color='red', strokeDash=[5,5], size=2).encode(y='y')
+        point = alt.Chart(pd.DataFrame({'x': [a_years], 'y': [m_depth]})).mark_point(color='orange', size=100, filled=True).encode(x='x', y='y')
+        
+        st.altair_chart(line + rule + point, use_container_width=True)
+
+        with st.container(border=True):
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("잔여 피복량", f"{rem:.1f} mm"); cc2.metric("속도 계수 (A)", f"{rate_a:.3f}"); cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
+
+# ---------------------------------------------------------
+# [Tab 4] 통계 및 비교 (기존 기능 유지)
 # ---------------------------------------------------------
 with tab4:
     st.subheader("📈 통계 및 비교 분석")
