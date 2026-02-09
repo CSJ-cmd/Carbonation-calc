@@ -70,49 +70,39 @@ def get_age_coefficient(days):
     return 1.0
 
 def calculate_strength(readings, angle, days, design_fck=24.0):
-    """ 지침에 따른 강도 산정 및 기각 로직 """
     if len(readings) < 5: return False, "데이터 부족 (5개 미만)"
     
-    # 1. 1차 평균 및 이상치 제거 (±20% 룰)
+    # 1. 이상치 제거 (±20% 룰)
     avg1 = sum(readings) / len(readings)
     valid, excluded = [], []
     for r in readings:
-        if avg1 * 0.8 <= r <= avg1 * 1.2:
-            valid.append(r)
-        else:
-            excluded.append(r)
+        if avg1 * 0.8 <= r <= avg1 * 1.2: valid.append(r)
+        else: excluded.append(r)
             
     discard_cnt = len(excluded)
     if len(readings) >= 20 and discard_cnt > 4: 
-        return False, f"시험 무효 (기각 {discard_cnt}개, 전체의 20% 초과)"
+        return False, f"시험 무효 (기각 {discard_cnt}개, 20% 초과)"
     if not valid: return False, "유효 데이터 없음"
         
-    # 2. 유효 평균 및 보정 적용
+    # 2. 보정 적용
     R_final = sum(valid) / len(valid)
     corr = get_angle_correction(R_final, angle)
     R0 = R_final + corr
     age_c = get_age_coefficient(days)
     
-    # 3. 추정식 계산 (국내외 주요 공식)
+    # 3. 공식 계산
     f_aij = max(0, (7.3 * R0 + 100) * 0.098 * age_c)        
     f_jsms = max(0, (1.27 * R0 - 18.0) * age_c)             
     f_mst = max(0, (15.2 * R0 - 112.8) * 0.098 * age_c)     
     f_kwon = max(0, (2.304 * R0 - 38.80) * age_c)           
     f_kalis = max(0, (1.3343 * R0 + 8.1977) * age_c)
     
-    # 설계강도 기준 평균값 산정
     target_values = [f_aij, f_jsms] if design_fck < 40 else [f_mst, f_kwon, f_kalis]
     s_mean = np.mean(target_values) if target_values else 0
     
     return True, {
-        "R_avg": R_final,
-        "R0": R0,
-        "Age_Coeff": age_c,
-        "Discard": discard_cnt,
-        "Excluded": excluded,
-        "Formulas": {
-            "일본건축": f_aij, "일본재료": f_jsms, "과기부": f_mst, "권영웅": f_kwon, "KALIS": f_kalis
-        },
+        "R_avg": R_final, "R0": R0, "Age_Coeff": age_c, "Discard": discard_cnt, "Excluded": excluded,
+        "Formulas": {"일본건축": f_aij, "일본재료": f_jsms, "과기부": f_mst, "권영웅": f_kwon, "KALIS": f_kalis},
         "Mean_Strength": s_mean
     }
 
@@ -120,17 +110,15 @@ def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
 # =========================================================
-# 3. 메인 화면 UI 구성
+# 3. 메인 화면 UI
 # =========================================================
 
 st.title("🏗️ 구조물 안전진단 통합 평가 Pro")
 
 with st.sidebar:
-    st.header("⚙️ 프로젝트 정보")
-    project_name = st.text_input("프로젝트명", "OO교량 정밀안전진단")
+    st.header("⚙️ 설정")
+    project_name = st.text_input("프로젝트명", "OO교량")
     inspector = st.text_input("진단자", "홍길동")
-    st.divider()
-    st.caption("v2.5 (세부지침 2026 개정판 반영)")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 통계·비교", "📖 점검 매뉴얼"])
 
@@ -138,33 +126,24 @@ tab1, tab2, tab3, tab4 = st.tabs(["🧪 탄산화", "🔨 반발경도", "📈 �
 # [Tab 1] 탄산화 평가
 # ---------------------------------------------------------
 with tab1:
-    st.subheader("탄산화 깊이 및 잔여 수명 평가")
+    st.subheader("탄산화 깊이 및 등급 판정")
     with st.container(border=True):
         c1, c2, c3 = st.columns(3)
-        with c1: measured_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0, 0.1)
-        with c2: design_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
-        with c3: age_years = st.number_input("경과 년수(년)", 1, 100, 20)
+        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0)
+        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
+        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20)
             
     if st.button("평가 실행", type="primary", key="btn_carb", use_container_width=True):
-        remaining = design_cover - measured_depth
-        rate_coeff = measured_depth / math.sqrt(age_years) if age_years > 0 else 0
-        
-        life_str = "계산 불가"; is_danger = False
-        if rate_coeff > 0:
-            total_time = (design_cover / rate_coeff) ** 2
-            life_years = total_time - age_years
-            life_str = f"{max(0, life_years):.1f} 년"
-            if remaining <= 0: is_danger = True
-
-        grade, color = ("A", "green") if remaining >= 30 else (("B", "blue") if remaining >= 10 else (("C", "orange") if remaining >= 0 else ("D", "red")))
+        rem = d_cover - m_depth
+        rate = m_depth / math.sqrt(a_years) if a_years > 0 else 0
+        life = (d_cover / rate)**2 - a_years if rate > 0 else 99
+        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
         
         with st.container(border=True):
             st.markdown(f"### 결과: :{color}[{grade} 등급]")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("잔여 깊이", f"{remaining:.1f} mm")
-            m2.metric("속도 계수(A)", f"{rate_coeff:.2f}")
-            m3.metric("예측 잔여수명", life_str)
-            if is_danger: st.error("🚨 경고: 탄산화 깊이가 철근 위치에 도달했습니다.")
+            m1, m2 = st.columns(2)
+            m1.metric("잔여 피복", f"{rem:.1f} mm")
+            m2.metric("예측 잔여수명", f"{max(0, life):.1f} 년")
 
 # ---------------------------------------------------------
 # [Tab 2] 반발경도 평가
@@ -176,89 +155,100 @@ with tab2:
     if mode == "단일 입력":
         with st.container(border=True):
             c1, c2, c3 = st.columns(3)
-            with c1: angle_opt = st.selectbox("타격 방향", [90, 45, 0, -45, -90], format_func=lambda x: {90:"+90°(상향수직)", 45:"+45°(상향경사)", 0:"0°(수평)", -45:"-45°(하향경사)", -90:"-90°(하향수직)"}[x])
-            with c2: days_inp = st.number_input("재령(일)", 28, 10000, 1000)
-            with c3: design_fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
-            input_txt = st.text_area("측정값 (20개 이상 입력 권장)", "54 56 55 53 58 55 54 55 52 57 55 56 54 55 59 42 55 56 54 55", height=100)
+            with c1: angle = st.selectbox("타격 방향", [90, 45, 0, -45, -90], format_func=lambda x: {90:"+90°(상향수직)", 45:"+45°(상향경사)", 0:"0°(수평)", -45:"-45°(하향경사)", -90:"-90°(하향수직)"}[x])
+            with c2: days = st.number_input("재령(일)", 28, 10000, 1000)
+            with c3: fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
+            txt = st.text_area("측정값 (공백 구분)", "54 56 55 53 58 55 54 55 52 57 55 56 54 55 59 42 55 56 54 55", height=80)
             
         if st.button("계산 실행", type="primary", use_container_width=True):
-            readings = [float(x) for x in input_txt.replace(',',' ').split() if x.strip()]
-            success, res = calculate_strength(readings, angle_opt, days_inp, design_fck)
-            if not success: st.error(res)
-            else:
+            rd = [float(x) for x in txt.replace(',',' ').split() if x.strip()]
+            success, res = calculate_strength(rd, angle, days, fck)
+            if success:
                 s_mean = res["Mean_Strength"]
-                st.success(f"추정 압축강도 평균: **{s_mean:.2f} MPa** (설계비: **{(s_mean/design_fck)*100:.1f}%**)")
-                with st.expander("ℹ️ 보정 및 기각 상세 정보", expanded=True):
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("유효 평균 R", f"{res['R_avg']:.1f}")
-                    col2.metric("보정 R0", f"{res['R0']:.1f}")
-                    col3.metric("기각 데이터", f"{res['Discard']}개")
-                    if res['Excluded']: st.warning(f"기각된 값: {res['Excluded']}")
+                st.success(f"평균 강도: **{s_mean:.2f} MPa**")
+                
+                # 차트 시각화
+                df_chart = pd.DataFrame({"공식": res["Formulas"].keys(), "강도": res["Formulas"].values()})
+                base = alt.Chart(df_chart).encode(x=alt.X('공식', sort=None), y='강도')
+                bars = base.mark_bar().encode(color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
+                rule = alt.Chart(pd.DataFrame({'y': [fck]})).mark_rule(color='red', strokeDash=[5,3]).encode(y='y')
+                st.altair_chart(bars + rule, use_container_width=True)
+                
+                with st.expander("ℹ️ 기각 데이터 확인"):
+                    st.write(f"기각 수: {res['Discard']}개 / 기각 값: {res['Excluded']}")
 
     elif mode == "다중 입력 (Batch)":
-        st.info("엑셀에서 '지점명 각도 재령 설계강도 측정값20개' 순으로 복사해 붙여넣으세요.")
-        batch_input = st.text_area("Batch Raw Data", height=150, placeholder="P1 0 1000 24 55 56 54 ...")
-        # (Batch 처리 로직은 이전 답변의 구조를 따르며, 지면 관계상 핵심 UI만 유지)
+        st.caption("지점명, 각도, 재령, 설계강도, 측정값들 순으로 입력하세요.")
+        batch_txt = st.text_area("Raw Data 복사/붙여넣기", height=100, placeholder="P1 0 1000 24 55 56 54 ...")
+        
+        # 데이터 파싱 로직
+        init_list = []
+        if batch_txt.strip():
+            for line in batch_txt.strip().split('\n'):
+                p = line.split()
+                if len(p) > 5:
+                    init_list.append({"선택":True, "지점":p[0], "각도":int(p[1]), "재령":int(p[2]), "설계":float(p[3]), "데이터":" ".join(p[4:])})
+        
+        df_in = pd.DataFrame(init_list) if init_list else pd.DataFrame(columns=["선택","지점","각도","재령","설계","데이터"])
+        edit_df = st.data_editor(df_in, use_container_width=True, hide_index=True)
+        
+        if st.button("🚀 일괄 계산", type="primary", use_container_width=True):
+            results = []
+            for _, row in edit_df.iterrows():
+                if not row["선택"]: continue
+                rd = [float(x) for x in str(row["데이터"]).replace(',',' ').split() if x.replace('.','',1).isdigit()]
+                ok, res = calculate_strength(rd, row["각도"], row["재령"], row["설계"])
+                if ok:
+                    results.append({"지점":row["지점"], "설계":row["설계"], "평균강도":round(res["Mean_Strength"],2), "강도비":round((res["Mean_Strength"]/row["설계"])*100,1)})
+            
+            if results:
+                res_df = pd.DataFrame(results)
+                # Batch 차트 시각화
+                c_base = alt.Chart(res_df).encode(x=alt.X('지점', sort=None))
+                c_bars = c_base.mark_bar().encode(y='평균강도', color=alt.condition(alt.datum.평균강도 >= alt.datum.설계, alt.value('#4D96FF'), alt.value('#FF6B6B')))
+                c_ticks = c_base.mark_tick(color='red', thickness=3, size=30).encode(y='설계')
+                st.altair_chart(c_bars + c_ticks, use_container_width=True)
+                st.dataframe(res_df, use_container_width=True)
 
 # ---------------------------------------------------------
-# [Tab 3] 강도 통계 및 비교
+# [Tab 3] 통계 및 비교
 # ---------------------------------------------------------
 with tab3:
-    st.subheader("종합 통계 분석")
-    input_stats = st.text_area("분석할 강도 데이터 리스트 (MPa)", placeholder="24.5 26.1 23.8 25.2 ...")
-    if st.button("통계 분석 실행", use_container_width=True):
-        data = [float(x) for x in input_stats.replace(',',' ').split() if x.strip()]
+    st.subheader("강도 통계 분석")
+    c1, c2 = st.columns([1, 3])
+    with c1: st_fck = st.number_input("기준 설계강도", 15.0, 100.0, 24.0)
+    with c2: st_txt = st.text_area("강도 데이터 목록 (MPa)", "24.5 26.2 23.1 21.8 25.5 27.0", height=68)
+    
+    if st.button("분석 실행", key="btn_st", use_container_width=True):
+        data = sorted([float(x) for x in st_txt.replace(',',' ').split() if x.strip()])
         if len(data) >= 2:
-            st.write(f"**평균:** {np.mean(data):.2f} / **표준편차:** {np.std(data, ddof=1):.2f} / **변동계수:** {(np.std(data, ddof=1)/np.mean(data))*100:.1f}%")
-            chart_data = pd.DataFrame({"순번": range(1, len(data)+1), "강도": data})
-            st.altair_chart(alt.Chart(chart_data).mark_bar().encode(x='순번:O', y='강도:Q'), use_container_width=True)
+            st.metric("평균 강도", f"{np.mean(data):.2f} MPa", delta=f"{(np.mean(data)/st_fck*100):.1f}%")
+            
+            # 통계 차트 (정렬된 데이터)
+            st_df = pd.DataFrame({"순번": range(1, len(data)+1), "강도": data})
+            s_bars = alt.Chart(st_df).mark_bar().encode(x='순번:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
+            s_rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='red', strokeDash=[5,3]).encode(y='y')
+            st.altair_chart(s_bars + s_rule, use_container_width=True)
 
 # ---------------------------------------------------------
-# [Tab 4] 점검 매뉴얼 (개선 및 신설 항목)
+# [Tab 4] 점검 매뉴얼
 # ---------------------------------------------------------
 with tab4:
-    st.subheader("📋 시설물 안전점검·진단 세부지침 가이드")
-    
-    with st.expander("1. 반발경도시험 타격 방향 및 보정", expanded=True):
+    st.subheader("📖 시설물 안전점검·진단 매뉴얼 요약")
+    with st.expander("1. 반발경도 타격방향 보정 기준", expanded=True):
         st.markdown("""
-        #### **📍 타격 방향 보정 (Angle Correction) 정의**
-        타격 각도($\\alpha$)에 따라 중력에 의한 오차를 보정하며, 본 프로그램은 아래 지침 기준을 자동 적용합니다.
+        | 구분 | 각도($\\alpha$) | 보정치 적용 원리 |
+        | :--- | :---: | :--- |
+        | **상향 수직** | **+90°** | 중력 반대 방향 타격 (반발도 감소 보정) |
+        | **상향 경사** | **+45°** | 대각선 위 방향 타격 |
+        | **수평 타격** | **0°** | 기준 방향 (보정치 없음) |
+        | **하향 경사** | **-45°** | 대각선 아래 방향 타격 |
+        | **하향 수직** | **-90°** | 중력 방향 타격 (반발도 증가 보정) |
         """)
-        
-        # 각도 보정 설명 표
-        angle_df = pd.DataFrame({
-            "타격 구분": ["상향 수직 타격", "상향 경사 타격", "수평 타격", "하향 경사 타격", "하향 수직 타격"],
-            "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
-            "대상 부재 예시": ["슬래브 하부 (천장)", "보 측면 경사부", "벽체, 기둥 측면", "교대 흉벽 경사", "슬래브 상면 (바닥)"]
-        })
-        st.table(angle_df)
-
-        
-
+    with st.expander("2. 데이터 기각 및 보정 절차"):
         st.markdown("""
-        #### **✅ 데이터 기각 및 보정 순서**
-        1.  **이상치 기각**: 측정값 20개 중 평균의 $\pm 20\%$를 벗어나는 값 제외. (4개 초과 기각 시 무효)
-        2.  **각도 보정**: 유효 평균 $R$에 타격 각도별 보정치($\Delta R$) 가감 $\rightarrow$ $R_0$ 산출.
-        3.  **재령 보정**: 재령보정계수($\alpha$)를 추정식에 곱하여 최종 비파괴 강도 산정.
-        """)
-
-    with st.expander("2. 탄산화 깊이 측정 및 평가"):
-        st.markdown("""
-        #### **✅ 측정 원리**
-        - 페놀프탈레인 용액 1%를 분무하여 적자색 변색 여부 확인.
-        - **적자색**: $pH > 9.2$ (건전) / **무색**: $pH < 9.2$ (탄산화)
-        
-        #### **✅ 등급 판정 기준 (잔여 피복량)**
-        - **A (매우 양호)**: 잔여 피복 $\ge 30mm$
-        - **B (양호)**: 잔여 피복 $\ge 10mm$
-        - **C (보통)**: 잔여 피복 $\ge 0mm$
-        - **D (불량)**: 잔여 피복 $< 0mm$ (철근 부식 위험)
-        """)
-
-    with st.expander("3. 철근 부식도 (자연전위법/CSE 기준)"):
-        st.markdown("""
-        - **$E > -200mV$**: 부식 가능성 희박 (10% 미만)
-        - **$-200mV \ge E > -350mV$**: 부식 여부 불확실
-        - **$E \le -350mV$**: 부식 가능성 매우 높음 (90% 이상)
+        1. **이상치 기각**: 전체 평균의 $\pm 20\%$ 범위를 벗어나는 데이터는 무효화.
+        2. **유효성 확인**: 기각된 데이터가 전체의 20%를 초과할 경우 해당 측정점은 재시험.
+        3. **순차 보정**: 유효 평균 $R$에 **[각도 보정]** $\rightarrow$ **[재령 보정]** 순으로 적용.
         """)
 
