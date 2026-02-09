@@ -24,7 +24,6 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
     .calc-box { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #1f77b4; margin-bottom: 15px; }
-    .usage-box { background-color: #e1f5fe; padding: 20px; border-radius: 10px; border: 1px solid #01579b; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -115,50 +114,82 @@ with st.sidebar:
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
-# 탭 순서: 매뉴얼 -> 반발경도 -> 탄산화 -> 통계
-tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "🧪 탄산화", "📈 통계·비교"])
+# 탭 순서: 1.매뉴얼, 2.탄산화, 3.반발경도, 4.통계
+tab1, tab2, tab3, tab4 = st.tabs(["📖 점검 매뉴얼", "🧪 탄산화", "🔨 반발경도", "📈 통계·비교"])
 
 # ---------------------------------------------------------
-# [Tab 1] 점검 매뉴얼 (프로그램 사용법 추가)
+# [Tab 1] 점검 매뉴얼
 # ---------------------------------------------------------
 with tab1:
     st.subheader("💡 프로그램 사용 가이드")
-    
-    # [NEW] 프로그램 사용법 최상단 추가
     st.info("""
-    **1. 반발경도 산정 시 설계기준강도를 정확히 입력해주세요.**
-    * 설계기준강도를 바탕으로 일반강도(<40MPa)와 고강도(≥40MPa)에 적합한 공식 적용 로직이 자동으로 변경됩니다.
+    **1. 반발경도 산정 시 설계기준강도를 입력해주세요.**
+    * 설계기준강도를 바탕으로 압축강도 추정에 필요한 공식 적용 로직이 자동으로 변경됩니다.
 
-    **2. 타격방향 보정 값을 매뉴얼을 참고하여 정확히 선택해주세요.**
-    * 측정 위치가 상향 타격(천장)인지 하향 타격(바닥)인지에 따라 중력 보정값이 달라집니다.
+    **2. 타격방향 보정 값을 매뉴얼을 참고해서 상향 타격인지 하향타격인지를 구분해서 선택해주세요.**
 
-    **3. 기본값 적용 안내 (미입력 시)**
-    * 재령이나 설계강도를 별도로 입력하지 않을 경우, 시스템상에서 **재령 3000일**, **설계기준강도 24MPa**가 기본 적용됩니다.
+    **3. 재령 등 별도로 적용하지 않을 시 프로그램상에서 재령 3000일, 설계기준강도 24MPa가 적용됩니다.**
     """)
-
     st.divider()
-    st.subheader("📋 시설물 안전점검·진단 가이드 (요약)")
-    
-    with st.expander("1. 반발경도시험 타격 방향 및 보정", expanded=True):
+    with st.expander("지침 요약 보기"):
         st.markdown("#### **📍 타격 방향 보정 (Angle Correction)**")
-        
         m_df = pd.DataFrame({
             "구분": ["상향 수직", "상향 경사", "수평 타격", "하향 경사", "하향 수직"],
             "각도 (α)": ["+90°", "+45°", "0°", "-45°", "-90°"],
             "부재 예시": ["슬래브 하부", "보 경사면", "벽체, 기둥", "교대 경사", "슬래브 상면"]
         })
         st.table(m_df)
-        st.info("보정 순서: 측정값 추출 → ±20% 이상치 기각 → 각도 보정($R_0$) → 재령 보정($\\alpha$)")
-
-    with st.expander("2. 탄산화 깊이 및 등급 판정"):
-        st.markdown("#### **✅ 등급 판정 기준 (잔여 피복 두께)**")
-        st.write("- **A 등급**: $\ge 30mm$ / **B 등급**: $\ge 10mm$ / **C 등급**: $\ge 0mm$ / **D 등급**: $< 0mm$")
-        
 
 # ---------------------------------------------------------
-# [Tab 2] 반발경도 평가
+# [Tab 2] 탄산화 평가 (그래프 추가)
 # ---------------------------------------------------------
 with tab2:
+    st.subheader("🧪 탄산화 깊이 및 상세 분석")
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0)
+        with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0)
+        with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20)
+            
+    if st.button("평가 실행", type="primary", key="btn_carb_run", use_container_width=True):
+        rem = d_cover - m_depth
+        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
+        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
+        res_life = total_life - a_years
+        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
+        
+        st.markdown(f"### 결과: :{color}[{grade} 등급]")
+        
+        # 그래프 데이터 생성 (0년~100년까지 예측 곡선)
+        year_steps = np.linspace(0, 100, 101)
+        depth_steps = rate_a * np.sqrt(year_steps)
+        df_plot = pd.DataFrame({'경과년수': year_steps, '탄산화깊이': depth_steps})
+        
+        # Altair 차트 구성
+        
+        line = alt.Chart(df_plot).mark_line(color='#1f77b4').encode(
+            x=alt.X('경과년수:Q', title='경과년수 (년)'),
+            y=alt.Y('탄산화깊이:Q', title='탄산화 깊이 (mm)')
+        )
+        # 설계 피복 가로선
+        rule = alt.Chart(pd.DataFrame({'y': [d_cover]})).mark_rule(color='red', strokeDash=[5,5], size=2).encode(y='y')
+        # 현재 측정점
+        point = alt.Chart(pd.DataFrame({'x': [a_years], 'y': [m_depth]})).mark_point(color='orange', size=100, filled=True).encode(x='x', y='y')
+        
+        st.altair_chart(line + rule + point, use_container_width=True)
+        st.caption("📈 파란선: 탄산화 예측곡선 | 빨간점선: 설계 피복 두께 | 주황점: 현재 측정 시점")
+
+        with st.container(border=True):
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("잔여 피복량", f"{rem:.1f} mm")
+            cc2.metric("속도 계수 (A)", f"{rate_a:.3f}")
+            cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
+            st.info(f"**계산 근거:** $A = {m_depth} / \\sqrt{{{a_years}}} = {rate_a:.3f}$, 잔여수명 $T = ({d_cover}/{rate_a:.3f})^2 - {a_years} = {res_life:.1f}$년")
+
+# ---------------------------------------------------------
+# [Tab 3] 반발경도 평가 (Batch 결과 강화 유지)
+# ---------------------------------------------------------
+with tab3:
     st.subheader("🔨 반발경도 정밀 강도 산정")
     mode = st.radio("입력 방식", ["단일 지점", "다중 지점 (Batch/File)"], horizontal=True)
 
@@ -175,15 +206,8 @@ with tab2:
             ok, res = calculate_strength(rd, angle, days, fck)
             if ok:
                 st.success(f"평균 추정 압축강도: **{res['Mean_Strength']:.2f} MPa**")
-                with st.container(border=True):
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("유효 평균 R", f"{res['R_avg']:.1f}"); m2.metric("각도 보정", f"{res['Angle_Corr']:+.1f}"); m3.metric("최종 R₀", f"{res['R0']:.1f}"); m4.metric("재령 계수 α", f"{res['Age_Coeff']:.2f}")
-                
                 df_f = pd.DataFrame({"공식": res["Formulas"].keys(), "강도": res["Formulas"].values()})
-                chart = alt.Chart(df_f).mark_bar().encode(
-                    x=alt.X('공식', sort=None), y='강도',
-                    color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
-                ).properties(height=350)
+                chart = alt.Chart(df_f).mark_bar().encode(x=alt.X('공식', sort=None), y='강도', color=alt.condition(alt.datum.강도 >= fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
                 rule = alt.Chart(pd.DataFrame({'y': [fck]})).mark_rule(color='red', strokeDash=[5, 3], size=2).encode(y='y')
                 st.altair_chart(chart + rule, use_container_width=True)
 
@@ -194,20 +218,11 @@ with tab2:
             try:
                 df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 for _, row in df_up.iterrows():
-                    init_data.append({"선택": True, "지점": row.get("지점", "P"), "각도": row.get("각도", 0), "재령": row.get("재령", 3000), "설계": row.get("설계", 24.0), "데이터": str(row.get("데이터", ""))})
+                    init_data.append({"선택": True, "지점": row.get("지점", "P"), "각도": int(row.get("각도", 0)), "재령": int(row.get("재령", 3000)), "설계": float(row.get("설계", 24.0)), "데이터": str(row.get("데이터", ""))})
             except: st.error("파일 파싱 실패")
 
         df_batch = pd.DataFrame(init_data) if init_data else pd.DataFrame(columns=["선택","지점","각도","재령","설계","데이터"])
-        edited_df = st.data_editor(
-            df_batch,
-            column_config={
-                "선택": st.column_config.CheckboxColumn("선택", default=True),
-                "각도": st.column_config.SelectboxColumn("각도 (α)", options=[90, 45, 0, -45, -90], required=True),
-                "재령": st.column_config.NumberColumn("재령", min_value=10, default=3000),
-                "설계": st.column_config.NumberColumn("설계", min_value=1, default=24)
-            },
-            use_container_width=True, hide_index=True, num_rows="dynamic"
-        )
+        edited_df = st.data_editor(df_batch, column_config={"선택": st.column_config.CheckboxColumn("선택", default=True), "각도": st.column_config.SelectboxColumn("각도 (α)", options=[90, 45, 0, -45, -90], required=True)}, use_container_width=True, hide_index=True, num_rows="dynamic")
         
         if st.button("🚀 일괄 계산 실행", type="primary", use_container_width=True):
             batch_res = []
@@ -224,38 +239,11 @@ with tab2:
                         for f_name, f_val in res["Formulas"].items(): data_entry[f_name] = round(f_val, 1)
                         batch_res.append(data_entry)
                 except: continue
-
             if batch_res:
                 final_df = pd.DataFrame(batch_res)
-                st.markdown("#### 📊 일괄 분석 요약")
-                c_strength = alt.Chart(final_df).mark_bar().encode(x=alt.X('지점', sort=None), y='추정강도', color=alt.condition(alt.datum.추정강도 >= alt.datum.설계, alt.value('#4D96FF'), alt.value('#FF6B6B')))
-                c_rule = alt.Chart(final_df).mark_tick(color='red', thickness=3, size=40).encode(x='지점', y='설계')
-                st.altair_chart(c_strength + c_rule, use_container_width=True)
-
-                res_tab1, res_tab2 = st.tabs(["📋 종합 요약", "🔍 세부 계산 데이터"])
+                res_tab1, res_tab2 = st.tabs(["📋 요약", "🔍 세부 데이터"])
                 with res_tab1: st.dataframe(final_df[["지점", "설계", "추정강도", "강도비(%)"]], use_container_width=True, hide_index=True)
                 with res_tab2: st.dataframe(final_df, use_container_width=True, hide_index=True)
-                st.download_button("결과 CSV 저장", convert_df(final_df), "Result.csv", "text/csv", use_container_width=True)
-
-# ---------------------------------------------------------
-# [Tab 3] 탄산화 평가
-# ---------------------------------------------------------
-with tab3:
-    st.subheader("🧪 탄산화 깊이 및 상세 분석")
-    c1, c2, c3 = st.columns(3)
-    with c1: m_depth = st.number_input("측정 깊이(mm)", 0.0, 100.0, 12.0, key="c_m")
-    with c2: d_cover = st.number_input("설계 피복(mm)", 10.0, 200.0, 40.0, key="c_d")
-    with c3: a_years = st.number_input("경과 년수(년)", 1, 100, 20, key="c_a")
-    if st.button("평가 실행", key="carb_btn", use_container_width=True):
-        rem = d_cover - m_depth
-        rate_a = m_depth / math.sqrt(a_years) if a_years > 0 else 0
-        total_life = (d_cover / rate_a)**2 if rate_a > 0 else 99.9
-        res_life = total_life - a_years
-        grade, color = ("A", "green") if rem >= 30 else (("B", "blue") if rem >= 10 else (("C", "orange") if rem >= 0 else ("D", "red")))
-        st.markdown(f"### 결과: :{color}[{grade} 등급]")
-        with st.container(border=True):
-            cc1, cc2, cc3 = st.columns(3)
-            cc1.metric("잔여 피복량", f"{rem:.1f} mm"); cc2.metric("속도 계수 (A)", f"{rate_a:.3f}"); cc3.metric("예측 잔여수명", f"{max(0, res_life):.1f} 년")
 
 # ---------------------------------------------------------
 # [Tab 4] 통계 및 비교
@@ -263,8 +251,8 @@ with tab3:
 with tab4:
     st.subheader("📈 통계 및 비교 분석")
     c1, c2 = st.columns([1, 3])
-    with c1: st_fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="s_f")
-    with c2: st_txt = st.text_area("강도 리스트", "24.5 26.2 23.1 21.8 25.5 27.0", key="s_t")
+    with c1: st_fck = st.number_input("기준 설계강도(MPa)", 15.0, 100.0, 24.0, key="st_fck")
+    with c2: st_txt = st.text_area("강도 데이터 목록", "24.5 26.2 23.1 21.8 25.5 27.0", key="st_txt")
     if st.button("통계 실행", use_container_width=True):
         data = sorted([float(x) for x in st_txt.replace(',',' ').split() if x.strip()])
         if len(data) >= 2:
@@ -275,4 +263,3 @@ with tab4:
             st_df = pd.DataFrame({"번호": range(1, len(data)+1), "강도": data})
             s_chart = alt.Chart(st_df).mark_bar().encode(x='번호:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B')))
             st.altair_chart(s_chart + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3], size=2).encode(y='y'), use_container_width=True)
-
