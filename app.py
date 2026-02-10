@@ -127,7 +127,7 @@ with tab1:
     """)
     
 st.divider()
-    st.subheader("📋 시설물 안전점검·진단 세부지침 매뉴얼")
+st.subheader("📋 시설물 안전점검·진단 세부지침 매뉴얼")
 
     with st.expander("1. 반발경도 시험 (Rebound Hardness Test) 상세 지침", expanded=False):
         st.markdown("""
@@ -282,5 +282,6 @@ with tab4:
                     m1, m2, m3 = st.columns(3)
                     m1.metric("평균", f"{avg_v:.2f} MPa", delta=f"{(avg_v/st_fck*100):.1f}%"); m2.metric("표준편차 (σ)", f"{std_v:.2f} MPa"); m3.metric("변동계수 (CV)", f"{(std_v/avg_v*100):.1f}%")
                 st.altair_chart(alt.Chart(pd.DataFrame({"번호": range(1, len(data)+1), "강도": data})).mark_bar().encode(x='번호:O', y='강도:Q', color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))) + alt.Chart(pd.DataFrame({'y':[st_fck]})).mark_rule(color='red', strokeDash=[5,3], size=2).encode(y='y'), use_container_width=True)
+
 
 
