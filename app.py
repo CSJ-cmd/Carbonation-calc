@@ -2293,14 +2293,26 @@ with tab2:
 
             st.markdown("### 📊 공식별 추정강도 비교")
             df_f = pd.DataFrame({"공식": list(res["Formulas"].keys()), "강도": list(res["Formulas"].values())})
-            chart = alt.Chart(df_f).mark_bar().encode(
-                x=alt.X('공식', sort=None),
-                y='강도',
-                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
-            ).properties(height=350)
+            formula_order = list(res["Formulas"].keys())
 
-            rule_chart = alt.Chart(pd.DataFrame({'y': [result_fck]})).mark_rule(color='red', strokeDash=[5, 3], size=2).encode(y='y')
-            st.altair_chart(chart + rule_chart, use_container_width=True)
+            st.caption("공식별 추정강도 · 빨간 점선 = 설계강도")
+
+            # 세로로 쌓이는 가로 막대(공식이 행으로, 강도가 막대 길이로) — 첫 제안 목업 형식
+            base_chart = alt.Chart(df_f).encode(
+                y=alt.Y('공식:N', sort=formula_order, title=None),
+                x=alt.X('강도:Q', title='추정강도 (MPa)'),
+            )
+            bars = base_chart.mark_bar(cornerRadiusEnd=3, height=24).encode(
+                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#16A34A'), alt.value('#DC2626')),
+                tooltip=[alt.Tooltip('공식:N'), alt.Tooltip('강도:Q', format='.2f', title='강도(MPa)')]
+            )
+            value_labels = base_chart.mark_text(align='left', baseline='middle', dx=5, fontWeight='bold').encode(
+                text=alt.Text('강도:Q', format='.1f')
+            )
+            rule_chart = alt.Chart(pd.DataFrame({'x': [result_fck]})).mark_rule(
+                color='#DC2626', strokeDash=[5, 3], size=2).encode(x='x:Q')
+
+            st.altair_chart((bars + rule_chart + value_labels).properties(height=260), use_container_width=True)
 
             # ----- PDF 보고서 다운로드 -----
             with st.expander("📄 PDF 보고서 다운로드 (정밀안전점검 부록용)", expanded=False):
@@ -2755,3 +2767,4 @@ with tab4:
             st.altair_chart(chart + rule, use_container_width=True)
         elif parsed:
             st.warning("최소 2개 이상의 숫자가 필요합니다.")
+
