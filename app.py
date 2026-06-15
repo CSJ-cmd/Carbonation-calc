@@ -2848,11 +2848,23 @@ with tab4:
                 m2.metric("표준편차 (σ)", f"{std_v:.2f} MPa")
                 m3.metric("변동계수 (CV)", f"{cv_v:.1f}%" if np.isfinite(cv_v) else "N/A")
 
-            chart = alt.Chart(pd.DataFrame({"번호": range(1, len(data) + 1), "강도": data})).mark_bar().encode(
-                x='번호:O', y='강도:Q',
-                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#4D96FF'), alt.value('#FF6B6B'))
+            n_items = len(data)
+            order_manual = [str(i) for i in range(1, n_items + 1)]
+            df_manual = pd.DataFrame({"번호": order_manual, "강도": data})
+            base_manual = alt.Chart(df_manual).encode(
+                y=alt.Y('번호:N', sort=order_manual, title='측정 번호 (강도 오름차순)'),
+                x=alt.X('강도:Q', title='강도 (MPa)'),
             )
-            rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='red', strokeDash=[5, 3], size=2).encode(y='y')
-            st.altair_chart(chart + rule, use_container_width=True)
+            bars_manual = base_manual.mark_bar(cornerRadiusEnd=3).encode(
+                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#16A34A'), alt.value('#DC2626')),
+                tooltip=[alt.Tooltip('번호:N'), alt.Tooltip('강도:Q', format='.2f', title='강도(MPa)')]
+            )
+            rule = alt.Chart(pd.DataFrame({'x': [st_fck]})).mark_rule(
+                color='#DC2626', strokeDash=[5, 3], size=2).encode(x='x:Q')
+            st.caption("강도 데이터 분포 · 빨간 점선 = 기준 설계강도")
+            st.altair_chart(
+                (bars_manual + rule).properties(height=max(220, n_items * 24)),
+                use_container_width=True
+            )
         elif parsed:
             st.warning("최소 2개 이상의 숫자가 필요합니다.")
