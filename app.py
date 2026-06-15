@@ -1885,7 +1885,7 @@ with tab2:
     mode = st.radio("입력 방식", ["단일 지점 (카메라/파일)", "다중 지점 (엑셀 업로드)"], horizontal=True)
 
     if mode.startswith("단일"):
-        with st.expander("1️⃣ 측정값 입력", expanded=True):
+        with st.expander("1️⃣ 측정값 입력 · 사진/OCR · 직접 입력", expanded=True):
 
             ocr_mode = st.radio(
                 "OCR 처리 모드",
@@ -2040,7 +2040,7 @@ with tab2:
                 elif st.session_state.get("ocr_error"):
                     st.warning(st.session_state["ocr_error"])
 
-        with st.expander("2️⃣ 보정조건 설정", expanded=True):
+        with st.expander("2️⃣ 보정조건 설정 · 방향·재령·설계강도·Ct·공식", expanded=True):
 
             # ---- 입력 파라미터: 모바일은 단일 컬럼, 데스크톱은 4열 ----
             if mobile_client:
@@ -2119,7 +2119,7 @@ with tab2:
             if 'ocr_result' in st.session_state:
                 default_txt = st.session_state['ocr_result']
 
-        with st.expander("3️⃣ 측정값 확인·편집", expanded=True):
+        with st.expander("3️⃣ 측정값 확인·편집 · 단일칸 ↔ 5×4 격자 연동", expanded=True):
 
             # =====================================================
             # 단일칸 텍스트 ↔ 5×4 격자 양방향 연동
@@ -2755,17 +2755,28 @@ with tab4:
 
                 st.dataframe(stats_df, use_container_width=True, hide_index=True)
 
-                # 공식별 CV 차트
-                cv_chart = alt.Chart(stats_df).mark_bar().encode(
-                    x=alt.X("공식:N", sort=stats_df["공식"].tolist()),
-                    y=alt.Y("변동계수CV(%):Q"),
+                # 공식별 CV 차트 (공식이 세로축에 오는 가로 막대 — 반발경도 결과와 동일 형식)
+                cv_order = stats_df["공식"].tolist()
+                cv_base = alt.Chart(stats_df).encode(
+                    y=alt.Y("공식:N", sort=cv_order, title=None),
+                    x=alt.X("변동계수CV(%):Q", title="변동계수 CV (%)"),
+                )
+                cv_bars = cv_base.mark_bar(cornerRadiusEnd=3, height=24).encode(
                     color=alt.condition(
                         alt.datum["공식"] == best["공식"],
-                        alt.value("#2ecc71"),
-                        alt.value("#95a5a6")
-                    )
-                ).properties(height=280, title="공식별 변동계수 비교 (낮을수록 안정적)")
-                st.altair_chart(cv_chart, use_container_width=True)
+                        alt.value("#16A34A"),
+                        alt.value("#94A3B8")
+                    ),
+                    tooltip=[alt.Tooltip("공식:N"), alt.Tooltip("변동계수CV(%):Q", format=".2f", title="CV(%)")]
+                )
+                cv_labels = cv_base.mark_text(align="left", baseline="middle", dx=5, fontWeight="bold").encode(
+                    text=alt.Text("변동계수CV(%):Q", format=".2f")
+                )
+                st.caption("공식별 변동계수 비교 · 위쪽일수록(=CV 낮을수록) 안정적 · 녹색 = 추천 공식")
+                st.altair_chart(
+                    (cv_bars + cv_labels).properties(height=260),
+                    use_container_width=True
+                )
 
                 # 지점별 공식 결과 분포
                 melted = active_recs.melt(id_vars=["지점"],
