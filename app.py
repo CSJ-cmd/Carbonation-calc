@@ -1885,7 +1885,7 @@ with tab2:
     mode = st.radio("입력 방식", ["단일 지점 (카메라/파일)", "다중 지점 (엑셀 업로드)"], horizontal=True)
 
     if mode.startswith("단일"):
-        with st.expander("1️⃣ 측정값 입력 · 사진/OCR · 직접 입력", expanded=True):
+        with st.expander("1️⃣ 측정값 입력", expanded=True):
 
             ocr_mode = st.radio(
                 "OCR 처리 모드",
@@ -2040,7 +2040,7 @@ with tab2:
                 elif st.session_state.get("ocr_error"):
                     st.warning(st.session_state["ocr_error"])
 
-        with st.expander("2️⃣ 보정조건 설정 · 방향·재령·설계강도·Ct·공식", expanded=True):
+        with st.expander("2️⃣ 보정조건 설정", expanded=True):
 
             # ---- 입력 파라미터: 모바일은 단일 컬럼, 데스크톱은 4열 ----
             if mobile_client:
@@ -2119,7 +2119,7 @@ with tab2:
             if 'ocr_result' in st.session_state:
                 default_txt = st.session_state['ocr_result']
 
-        with st.expander("3️⃣ 측정값 확인·편집 · 단일칸 ↔ 5×4 격자 연동", expanded=True):
+        with st.expander("3️⃣ 측정값 확인·편집", expanded=True):
 
             # =====================================================
             # 단일칸 텍스트 ↔ 5×4 격자 양방향 연동
