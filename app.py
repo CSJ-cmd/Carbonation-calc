@@ -2120,62 +2120,144 @@ with tab2:
             if 'ocr_result' in st.session_state:
                 default_txt = st.session_state['ocr_result']
 
-            render_step_heading("3️⃣ 측정값 확인·편집", "인식 또는 입력된 측정값을 표에서 최종 확인한 뒤 계산을 실행합니다.")
-
-            txt = st.text_area(
-                "측정값 입력/수정",
-                value=default_txt,
-                height=120 if mobile_client else 80,
-                help="여러 값은 공백, 줄바꿈, 쉼표로 구분할 수 있습니다. 소수점은 58.4처럼 점(.)을 사용하세요."
+            render_step_heading(
+                "3️⃣ 측정값 확인·편집",
+                "단일칸 일괄 입력과 5×4 격자(20칸)가 실시간으로 연동됩니다. 어느 쪽을 고쳐도 서로 반영됩니다."
             )
 
-            # OCR/텍스트 결과를 표 편집 UI로 제공합니다.
-            # - 정확히 20개 정책: 20칸 고정
-            # - 20개 이상 허용 정책: 입력된 값 개수만큼 행을 표시하고, 20개보다 적으면 20칸 표시
-            preview_vals = parse_readings_text(txt)
-            if point_count_policy == REBOUND_POINT_POLICY_EXACT_20:
-                grid_row_count = 20
-                grid_num_rows = "fixed"
-                if len(preview_vals) > 20:
-                    st.warning("정확히 20개 정책에서는 입력값이 20개를 초과하면 첫 20개만 편집표에 반영됩니다. 추가값까지 쓰려면 [20개 이상 허용]을 선택하세요.")
-            else:
-                grid_row_count = max(20, len(preview_vals))
-                grid_num_rows = "dynamic"
+            # =====================================================
+            # 단일칸 텍스트 ↔ 5×4 격자 양방향 연동
+            # - 캐노니컬 소스(reb_canon)를 단일 진실원본으로 두고,
+            #   텍스트/격자 중 바뀐 쪽을 감지해 canon을 갱신한 뒤 양쪽을 재시드합니다.
+            # - 재시드 덕분에 정상상태에서는 둘 중 하나만 canon과 달라지므로
+            #   무한 rerun 없이 안정적으로 동기화됩니다.
+            # =====================================================
+            REB_GRID_COLS = 5  # 5칸 × 4행 = 20칸
 
-            base_vals = (preview_vals + [np.nan] * grid_row_count)[:grid_row_count]
-            grid_df = pd.DataFrame({
-                "No": list(range(1, grid_row_count + 1)),
-                "측정값": base_vals
-            })
-            grid_key = f"ocr_grid_{point_count_policy}_{grid_row_count}_{abs(hash(txt)) % (10**8)}"
+            def _reb_vals_to_text(vals):
+                out = []
+                for v in vals:
+                    try:
+                        fv = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if not np.isfinite(fv):
+                        continue
+                    out.append(str(int(fv)) if abs(fv - round(fv)) < 1e-6 else f"{fv:.1f}")
+                return " ".join(out)
+
+            def _reb_round_list(vals):
+                return [round(float(v), 4) for v in vals]
+
+            def _reb_vals_to_grid_df(vals, total_cells, cols):
+                padded = (list(vals) + [np.nan] * total_cells)[:total_cells]
+                rows = [padded[i:i + cols] for i in range(0, total_cells, cols)]
+                return pd.DataFrame(rows, columns=[f"{c + 1}칸" for c in range(cols)])
+
+            def _reb_grid_df_to_vals(df):
+                out = []
+                for _, grow in df.iterrows():
+                    for col in df.columns:
+                        cell = grow[col]
+                        if pd.notna(cell):
+                            out.append(float(cell))
+                return out
+
+            # 캐노니컬 소스 초기화
+            if 'reb_canon' not in st.session_state:
+                st.session_state['reb_canon'] = default_txt
+                st.session_state['reb_canon_ocr_seen'] = st.session_state.get('ocr_result', '')
+
+            # 새 OCR 결과가 들어오면 캐노니컬에 반영하고 양쪽 위젯 재시드
+            _cur_ocr = st.session_state.get('ocr_result', '')
+            if _cur_ocr and _cur_ocr != st.session_state.get('reb_canon_ocr_seen', ''):
+                st.session_state['reb_canon'] = _cur_ocr
+                st.session_state['reb_canon_ocr_seen'] = _cur_ocr
+                st.session_state['reb_reseed_text'] = True
+                st.session_state['reb_reseed_grid'] = True
+
+            canon = st.session_state['reb_canon']
+            canon_vals = parse_readings_text(canon)
+
+            # 정책별 격자 크기 (정확히 20개 = 4행 고정 / 20개 이상 = 동적)
+            if point_count_policy == REBOUND_POINT_POLICY_EXACT_20:
+                reb_total_cells = 20
+                reb_grid_num_rows = "fixed"
+                if len(canon_vals) > 20:
+                    st.warning("‘정확히 20개’ 정책에서는 앞 20개만 격자에 표시됩니다. 추가값까지 쓰려면 [20개 이상 허용]을 선택하세요.")
+            else:
+                reb_rows = max(4, math.ceil(max(20, len(canon_vals)) / REB_GRID_COLS))
+                reb_total_cells = reb_rows * REB_GRID_COLS
+                reb_grid_num_rows = "dynamic"
+
+            # 위젯 생성 전에 재시드 처리 (value/key 충돌 방지)
+            if st.session_state.pop('reb_reseed_text', False) or 'reb_text' not in st.session_state:
+                st.session_state['reb_text'] = canon
+            if st.session_state.pop('reb_reseed_grid', False):
+                st.session_state.pop('reb_grid', None)
+
+            # 단일칸 일괄 입력
+            st.caption("✏️ 단일칸 일괄 입력 (아래 5×4 격자와 실시간 연동)")
+            st.text_area(
+                "측정값 일괄 입력/수정",
+                height=140 if mobile_client else 90,
+                key="reb_text",
+                help="공백·쉼표·줄바꿈으로 구분. 소수점은 58.4처럼 점(.)을 사용하세요.",
+                label_visibility="collapsed",
+            )
+
+            # 5×4 격자 (측정 순서대로: 왼→오, 위→아래)
+            st.caption("🔢 5 × 4 격자 — 측정 순서대로 입력 (왼→오, 위→아래)")
+            reb_grid_df = _reb_vals_to_grid_df(canon_vals, reb_total_cells, REB_GRID_COLS)
+            reb_num_cfg = st.column_config.NumberColumn(
+                min_value=REBOUND_READING_MIN, max_value=REBOUND_READING_MAX, step=0.1, format="%.1f"
+            )
             edited_grid = st.data_editor(
-                grid_df,
-                column_config={
-                    "No": st.column_config.NumberColumn("No", disabled=True),
-                    "측정값": st.column_config.NumberColumn("측정값", min_value=REBOUND_READING_MIN, max_value=REBOUND_READING_MAX, step=0.1),
-                },
+                reb_grid_df,
+                column_config={c: reb_num_cfg for c in reb_grid_df.columns},
                 hide_index=True,
                 use_container_width=True,
-                num_rows=grid_num_rows,
-                key=grid_key
+                num_rows=reb_grid_num_rows,
+                key="reb_grid",
             )
 
-            valid_grid_vals = [float(v) for v in edited_grid["측정값"].tolist() if not pd.isna(v)]
+            # 양쪽 위젯 현재값 수집
+            text_vals = parse_readings_text(st.session_state.get('reb_text', canon))
+            grid_vals = _reb_grid_df_to_vals(edited_grid)
+
+            # 변경 감지 (재시드로 정상상태에서는 둘 중 하나만 canon과 달라짐)
+            canon_for_grid = canon_vals[:reb_total_cells] if reb_grid_num_rows == "fixed" else canon_vals
+            text_changed = _reb_round_list(text_vals) != _reb_round_list(canon_vals)
+            grid_changed = _reb_round_list(grid_vals) != _reb_round_list(canon_for_grid)
+
+            if text_changed:
+                st.session_state['reb_canon'] = _reb_vals_to_text(text_vals)
+                st.session_state['reb_reseed_text'] = True
+                st.session_state['reb_reseed_grid'] = True
+                st.rerun()
+            elif grid_changed:
+                st.session_state['reb_canon'] = _reb_vals_to_text(grid_vals)
+                st.session_state['reb_reseed_text'] = True
+                st.session_state['reb_reseed_grid'] = True
+                st.rerun()
+
+            # 계산에 사용할 값/문자열 확정 (단일 진실원본 = canon)
+            valid_grid_vals = list(canon_vals)
             input_count = len(valid_grid_vals)
+            txt = _reb_vals_to_text(valid_grid_vals)
+
+            # 정책별 개수 안내
             if point_count_policy == REBOUND_POINT_POLICY_EXACT_20:
                 if input_count == 20:
-                    st.success("측정값 20개가 입력되었습니다. 정확히 20개 정책 조건을 만족합니다.")
+                    st.success("측정값 20개가 입력되었습니다. ‘정확히 20개’ 정책 조건을 만족합니다.")
                 else:
-                    st.warning(f"현재 측정값 {input_count}개입니다. 정확히 20개 정책에서는 20개가 필요합니다.")
+                    st.warning(f"현재 측정값 {input_count}개입니다. ‘정확히 20개’ 정책에서는 20개가 필요합니다.")
             else:
                 if input_count >= 20:
                     discard_limit_preview = get_discard_limit_for_policy(input_count, point_count_policy)
-                    st.success(f"측정값 {input_count}개가 입력되었습니다. 20개 이상 허용 정책 조건을 만족합니다. 현재 기각 무효 기준은 {discard_limit_preview}개 이상입니다.")
+                    st.success(f"측정값 {input_count}개가 입력되었습니다. ‘20개 이상 허용’ 정책 조건을 만족합니다. 현재 기각 무효 기준은 {discard_limit_preview}개 이상입니다.")
                 else:
-                    st.warning(f"현재 측정값 {input_count}개입니다. 20개 이상 허용 정책에서도 최소 20개가 필요합니다.")
-
-            if valid_grid_vals:
-                txt = " ".join([str(int(v)) if abs(v - round(v)) < 1e-6 else f"{v:.1f}" for v in valid_grid_vals])
+                    st.warning(f"현재 측정값 {input_count}개입니다. ‘20개 이상 허용’ 정책에서도 최소 20개가 필요합니다.")
 
         render_step_heading("4️⃣ 계산 실행 및 결과 확인", "입력값이 확정되면 자동 이상치 기각, 방향·재령·Ct 보정, 공식별 강도 산정을 수행합니다.")
         if st.button("🚀 계산 실행", type="primary", use_container_width=True):
@@ -2767,4 +2849,3 @@ with tab4:
             st.altair_chart(chart + rule, use_container_width=True)
         elif parsed:
             st.warning("최소 2개 이상의 숫자가 필요합니다.")
-
