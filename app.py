@@ -2823,7 +2823,7 @@ with tab4:
 
     # ----- 2) 수동 입력 강도 데이터 통계 (기존 호환) -----
     st.divider()
-    with st.expander("📋 수동 입력 강도 데이터 통계 (간이 분석)", expanded=False):
+    with st.expander("📋 (수동입력) 강도 데이터 통계", expanded=False):
         session_data_str = " ".join([f"{x:.1f}" for x in st.session_state['rebound_data']])
         default_stat_txt = session_data_str if session_data_str else "24.5 26.2 23.1 21.8 25.5 27.0"
 
