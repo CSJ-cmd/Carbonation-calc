@@ -393,6 +393,69 @@ def _sync_grid_to_text(grid_key, grid_cols):
         st.session_state['reb_grid_ver'] = st.session_state.get('reb_grid_ver', 0) + 1
 
 
+def inject_numeric_keypad():
+    """[숫자패드] 모바일 입력 보정 — 측정값 입력 요소에 숫자 키패드를 강제한다.
+
+    · Streamlit 은 리렌더마다 DOM 을 새로 그리므로 MutationObserver 로 재적용한다.
+    · textarea 는 숫자 키패드에 공백 키가 없어 값 구분이 불가능하다.
+      → 소수점을 연속 두 번 누르면 공백으로 자동 치환한다 ("54..56" → "54 56").
+    · 데스크톱 물리 키보드는 inputmode 를 무시하므로 영향이 없다.
+    """
+    import streamlit.components.v1 as components
+    components.html(
+        r"""
+<script>
+(function () {
+  const doc = window.parent.document;
+
+  function markTextArea(el) {
+    if (el.dataset.numpadReady === "1") return;
+    el.dataset.numpadReady = "1";
+    el.setAttribute("inputmode", "decimal");
+    el.setAttribute("autocomplete", "off");
+    el.setAttribute("autocorrect", "off");
+    el.setAttribute("autocapitalize", "off");
+    el.setAttribute("spellcheck", "false");
+
+    // 숫자 키패드에는 공백 키가 없다 → '..' 를 구분자로 자동 치환
+    el.addEventListener("input", function () {
+      if (el.value.indexOf("..") === -1) return;
+      const pos = el.selectionStart;
+      const before = el.value;
+      el.value = before.replace(/\.\./g, " ");
+      const shift = before.length - el.value.length;
+      try { el.setSelectionRange(pos - shift, pos - shift); } catch (e) {}
+      // Streamlit(React) 에 값 변경을 알린다
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function markNumberInput(el) {
+    if (el.dataset.numpadReady === "1") return;
+    el.dataset.numpadReady = "1";
+    el.setAttribute("inputmode", "decimal");
+  }
+
+  function apply() {
+    // 측정값 붙여넣기 칸 (aria-label 로 특정)
+    doc.querySelectorAll("textarea").forEach(function (el) {
+      const label = (el.getAttribute("aria-label") || "") + (el.placeholder || "");
+      if (label.indexOf("측정값") !== -1) markTextArea(el);
+    });
+    // 격자 셀 / number_input (기기 편차 대비 보정)
+    doc.querySelectorAll('input[type="number"], [data-testid="stDataFrame"] input')
+       .forEach(markNumberInput);
+  }
+
+  apply();
+  new MutationObserver(apply).observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+        """,
+        height=0,
+    )
+
+
 def is_mobile_client():
     """간단한 UA 기반 모바일/태블릿 판별"""
     try:
@@ -1461,7 +1524,9 @@ with tab1:
     * 최종 강도 = Ct × 비파괴(반발경도) 강도
 
     **5. 측정점수 정책을 확인하세요.**
-    * 기본값은 [20개]입니다. 1개소당 20개 측정값만 사용하는 보수적인 방식입니다.
+    * 기본값은 [
+    
+    20개]입니다. 1개소당 20개 측정값만 사용하는 보수적인 방식입니다.
     * 추가 측정값까지 반영해야 하는 경우 [20개 이상 허용]을 선택할 수 있으며, 이때 기각 기준은 20% 이상으로 적용됩니다.
 
     **6. 통계ㆍ비교 탭 활용 안내**
@@ -1492,7 +1557,7 @@ with tab1:
             "대상 부재 예시": ["슬래브 하부 (천장)", "보 경사면", "벽체, 기둥 측면", "교대/교각 경사부", "슬래브 상면 (바닥)"]
         })
         st.table(m_df)
-        st.info("※ 본 프로그램은 각도 선택 시 보정식(2차식)을 그대로 적용하여 $R_0$를 산정합니다.")
+        st.info("※ 본 프로그램은 각도 선택 시 엑셀(1. 원본) 보정식(2차식)을 그대로 적용하여 $R_0$를 산정합니다.")
 
     with st.expander("🧪 검증용 테스트 케이스 실행(개발/검증)", expanded=False):
         st.caption("앱 내부 버튼으로 TC0~TC7을 확인할 수 있고, v6부터는 같은 검증을 pytest 명령어로도 자동 실행할 수 있습니다.")
@@ -1518,6 +1583,7 @@ with tab2:
     mobile_client = is_mobile_client()
     if mobile_client:
         st.caption("📱 모바일/태블릿 최적화 모드")
+        inject_numeric_keypad()   # [숫자패드] 측정값 입력 요소에 숫자 키패드 강제
 
     mode = st.radio("입력 방식", ["단일 지점 (카메라/파일)", "다중 지점 (엑셀 업로드)"], horizontal=True)
 
@@ -1763,6 +1829,10 @@ with tab2:
                 placeholder=REBOUND_DEFAULT_GRID_TEXT,
                 help="여기서 값을 고치면 아래 격자에 즉시 반영되고, 격자를 고치면 이 칸도 자동 갱신됩니다."
             )
+            if mobile_client:
+                # [숫자패드] 숫자 키패드에는 공백 키가 없다 → 점 두 번(..)이 구분자 역할
+                st.caption("⌨️ 숫자 키패드 입력 중에는 **점을 두 번(..)** 눌러 값을 구분하세요. "
+                           "예) 54..56..55 → 54 56 55 로 자동 변환됩니다.")
             st.caption("🔄 텍스트칸과 아래 격자가 실시간 양방향 동기화됩니다. (별도 버튼 불필요)")
 
             source_txt = st.session_state.get('reb_src_txt', "")
