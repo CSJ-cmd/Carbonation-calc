@@ -207,7 +207,7 @@ def render_workflow_header(active_index=0):
     steps = [
         ("1", "프로젝트", "점검 정보 확인"),
         ("2", "측정값 입력", "Rawdata 확인"),
-        ("3", "보정조건", "방향·재령·설계강도"),
+        ("3", "보정조건", "방향·재령·Ct"),
         ("4", "자동 계산", "강도·공식 산정"),
         ("5", "후속 작업", "통계·보고서"),
     ]
@@ -1461,7 +1461,9 @@ with tab1:
     * 최종 강도 = Ct × 비파괴(반발경도) 강도
 
     **5. 측정점수 정책을 확인하세요.**
-    * 기본값은 [정확히 20개]입니다. 1개소당 20개 측정값만 사용하는 보수적인 방식입니다.
+    * 기본값은 [
+    
+    20개]입니다. 1개소당 20개 측정값만 사용하는 보수적인 방식입니다.
     * 추가 측정값까지 반영해야 하는 경우 [20개 이상 허용]을 선택할 수 있으며, 이때 기각 기준은 20% 이상으로 적용됩니다.
 
     **6. 통계ㆍ비교 탭 활용 안내**
@@ -1511,7 +1513,7 @@ with tab1:
 with tab2:
     render_step_heading(
         "🔨 반발경도 정밀 강도 산정",
-        "측정값 입력 → 보정조건(방향·재령·강도) → 자동 계산 → 통계·보고서 순으로 진행합니다."
+        "측정값 입력 → 보정조건(타격방향·재령·설계기준강도) → 자동 계산 → 통계·보고서 순으로 진행합니다."
     )
     render_workflow_header(active_index=(4 if st.session_state.get('last_rebound_result') else 1))
 
@@ -1698,7 +1700,7 @@ with tab2:
                 index=0,
                 horizontal=not mobile_client,
                 help=(
-                    "기본값은 정확히 20개입니다. 추가 측정값을 평균 산정에 포함해야 하는 경우에만 "
+                    "기본값은 20개입니다. 추가 측정값을 평균 산정에 포함해야 하는 경우에만 "
                     "20개 이상 허용을 선택하세요."
                 )
             )
@@ -2098,7 +2100,7 @@ with tab2:
             "재령": [3000, 3000],
             "설계": [40, 40],
             "Ct": [1.00, 1.00],
-            "측정정책": ["20", "20"],
+            "측정정책": ["정확히20", "정확히20"],
             "데이터": [
                 "58.4 57 61.8 61.2 60.6 58.9 59.9 58.9 58.2 57.8 61.5 60.1 64.1 57.9 59.3 56.8 57.1 58 58.4 58.0",
                 "32 33 35 34 32 33 35 34 32 33 35 34 32 33 35 34 32 33 35 34"
@@ -2139,7 +2141,7 @@ with tab2:
                             "재령": _safe_num(row.get("재령", 3000), 3000, int),
                             "설계": _safe_num(row.get("설계", 24.0), 24.0, float),
                             "Ct": _safe_num(row.get("Ct", 1.0), 1.0, float),
-                            "측정정책": str(row.get("측정정책", "20")),
+                            "측정정책": str(row.get("측정정책", "정확히20")),
                             "데이터": str(row.get("데이터", ""))
                         })
                     except Exception as row_err:
@@ -2456,9 +2458,23 @@ with tab4:
         session_data_str = " ".join([f"{x:.1f}" for x in st.session_state['rebound_data']])
         default_stat_txt = session_data_str if session_data_str else "24.5 26.2 23.1 21.8 25.5 27.0"
 
+        # [수정 A] st.text_area는 key가 세션에 존재하면 value 인자를 무시한다.
+        # 그대로 두면 반발경도 탭에서 지점을 추가해도 이 칸이 첫 렌더 값에 고정된다.
+        # 누적 데이터의 서명이 바뀐 경우에만 세션 값을 직접 갱신해,
+        # 사용자가 손으로 편집한 내용은 보존한다.
+        if 'stat_raw' not in st.session_state:
+            st.session_state['stat_raw'] = default_stat_txt
+            st.session_state['_stat_sig'] = session_data_str
+        elif session_data_str and st.session_state.get('_stat_sig') != session_data_str:
+            st.session_state['stat_raw'] = session_data_str
+            st.session_state['_stat_sig'] = session_data_str
+
+        if session_data_str:
+            st.caption(f"↺ 반발경도 탭 누적 지점 {len(st.session_state['rebound_data'])}개의 "
+                       "평균강도가 자동 반영됩니다. 직접 수정해도 됩니다.")
+
         raw_txt = st.text_area(
             "강도 데이터 목록",
-            default_stat_txt,
             height=68,
             key="stat_raw",
             help="여러 값은 공백, 줄바꿈, 쉼표로 구분할 수 있습니다. 소수점은 24.5처럼 점(.)을 사용하세요."
