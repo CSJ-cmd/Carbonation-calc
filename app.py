@@ -8,6 +8,8 @@ import re
 import logging
 import hashlib
 import html
+import json
+from datetime import datetime, timezone, timedelta
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -109,12 +111,6 @@ st.markdown("""
     }
     .workflow-arrow { align-self: center; color: var(--primary); font-weight: 900; padding: 0 2px; }
 
-    .home-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 12px 0 18px 0; }
-    .home-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; box-shadow: 0 8px 18px rgba(15, 76, 129, 0.05); }
-    .home-card-title { color: var(--text-sub); font-size: 0.88rem; margin-bottom: 6px; }
-    .home-card-value { color: var(--text-main); font-size: 1.55rem; font-weight: 900; }
-    .home-card-sub { color: var(--text-sub); font-size: 0.82rem; margin-top: 4px; }
-
     .step-title { margin: 10px 0; padding: 12px 14px; border-radius: 14px; border: 1px solid #dbeafe; background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%); }
     .step-title b { color: var(--primary); font-size: 1.08rem; }
     .step-title span { display: block; margin-top: 3px; color: var(--text-sub); font-size: 0.9rem; line-height: 1.5; }
@@ -135,14 +131,6 @@ st.markdown("""
     .recommend-main { color: #14532d; font-size: 1.9rem; font-weight: 900; margin-top: 4px; }
     .recommend-sub { color: #475569; font-size: 0.92rem; margin-top: 4px; line-height: 1.5; }
 
-    .download-panel { border: 1px solid var(--border); border-radius: 16px; background: #ffffff; padding: 14px; margin-top: 10px; }
-
-    /* 기존 판정/계산 박스 (호환 유지) */
-    .verdict-card { border: 1px solid rgba(127,127,127,0.18); border-radius: 14px; padding: 18px 20px; margin: 6px 0 14px; background: rgba(127,127,127,0.04); }
-    .verdict-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 8px; margin-bottom: 10px; }
-    .verdict-num { font-size: 50px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-    .verdict-sub { font-size: 13px; color: rgba(127,127,127,0.95); }
-    .calc-box { background-color: rgba(127,127,127,0.06); padding: 15px; border-radius: 10px; border-left: 5px solid var(--primary); margin-bottom: 15px; }
     div[data-testid="stTable"] { overflow-x: auto; }
 
     /* expander 헤더 정렬 + 모바일 아이콘 텍스트 노출 보정 (기존 유지) */
@@ -162,7 +150,6 @@ st.markdown("""
         .workflow-wrap { display: block; }
         .workflow-step { margin-bottom: 8px; }
         .workflow-arrow { text-align: center; padding: 2px 0; }
-        .home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .result-hero { grid-template-columns: 1fr; }
     }
     @media (max-width: 768px) {
@@ -170,10 +157,8 @@ st.markdown("""
         [data-testid="stHeader"] { height: 0 !important; }
         .block-container { padding-top: 0.5rem !important; }
         div[data-testid="stExpander"] details > summary { padding-left: 10px !important; }
-        .verdict-num { font-size: 42px; }
     }
     @media (max-width: 520px) {
-        .home-grid { grid-template-columns: 1fr; }
         .app-hero-title { font-size: 1.35rem; }
         .result-value { font-size: 1.45rem; }
     }
@@ -607,130 +592,6 @@ def get_recommended_formula_description(design_fck):
     return f"{range_label}: {', '.join(formulas)}"
 
 
-@st.cache_resource
-def load_ocr_model():
-    import easyocr
-    return easyocr.Reader(['en'], gpu=False)
-
-
-def _normalize_ocr_token(text):
-    text = str(text)
-    text = re.sub(r'(?<=\d),(?=\d{3}(?:\D|$))', '', text)
-    replacements = {
-        'O': '0', 'o': '0',
-        'I': '1', 'l': '1', '|': '1',
-        ',': '.', ';': '.',
-    }
-    for src, dst in replacements.items():
-        text = text.replace(src, dst)
-    return text.strip()
-
-
-def _extract_numeric_candidates(ocr_result):
-    candidates = []
-    for item in ocr_result:
-        if len(item) < 3:
-            continue
-        bbox, raw_text, conf = item
-        text = _normalize_ocr_token(str(raw_text))
-        nums = re.findall(r'\d+(?:\.\d+)?', text)
-        if not nums:
-            continue
-
-        ys = [pt[1] for pt in bbox]
-        xs = [pt[0] for pt in bbox]
-        y_center = float(sum(ys) / len(ys))
-        x_center = float(sum(xs) / len(xs))
-        h = float(max(ys) - min(ys)) if ys else 0.0
-
-        for num in nums:
-            try:
-                val = float(num)
-                candidates.append({
-                    "value": val,
-                    "x": x_center,
-                    "y": y_center,
-                    "h": h,
-                    "conf": float(conf),
-                })
-            except Exception:
-                continue
-    return candidates
-
-
-def _cluster_rows(candidates):
-    if not candidates:
-        return []
-
-    heights = [c["h"] for c in candidates if c["h"] > 0]
-    row_tol = max(10.0, (float(np.median(heights)) * 0.75) if heights else 12.0)
-
-    sorted_by_y = sorted(candidates, key=lambda c: c["y"])
-    rows = []
-    for c in sorted_by_y:
-        if not rows:
-            rows.append([c])
-            continue
-
-        last_row = rows[-1]
-        last_y = float(np.mean([r["y"] for r in last_row]))
-        if abs(c["y"] - last_y) <= row_tol:
-            last_row.append(c)
-        else:
-            rows.append([c])
-
-    for row in rows:
-        row.sort(key=lambda c: c["x"])
-    return rows
-
-
-def _select_best_20_readings(ocr_result, target_count=20):
-    candidates = _extract_numeric_candidates(ocr_result)
-    if not candidates:
-        return []
-
-    plausible = [c for c in candidates if 10 <= c["value"] <= 100]
-    work = plausible if plausible else candidates
-
-    rows = _cluster_rows(work)
-    if not rows:
-        return []
-
-    measurement_rows = [r for r in rows if len(r) >= 3]
-    if measurement_rows:
-        selected_rows = measurement_rows[-max(4, min(6, len(measurement_rows))):]
-    else:
-        selected_rows = rows
-
-    ordered_values = [c["value"] for row in selected_rows for c in row]
-    ordered_keys = {(c["x"], c["y"], c["value"]) for row in selected_rows for c in row}
-
-    if len(ordered_values) >= target_count:
-        return ordered_values[:target_count]
-
-    remain = [
-        c["value"]
-        for c in sorted(work, key=lambda c: (c["y"], c["x"]))
-        if (c["x"], c["y"], c["value"]) not in ordered_keys
-    ]
-    merged = []
-    for v in ordered_values + remain:
-        if len(merged) >= target_count:
-            break
-        merged.append(v)
-    return merged
-
-
-def _format_readings_for_text(values):
-    formatted = []
-    for v in values:
-        if abs(v - round(v)) < 1e-6:
-            formatted.append(str(int(round(v))))
-        else:
-            formatted.append(f"{v:.1f}")
-    return " ".join(formatted)
-
-
 def _normalize_manual_reading_text(raw_text):
     if raw_text is None:
         return ""
@@ -750,24 +611,6 @@ def parse_readings_text(raw_text):
         return []
 
     tokens = re.findall(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)', text)
-
-    vals = []
-    for token in tokens:
-        try:
-            value = float(token)
-        except (TypeError, ValueError):
-            continue
-        if np.isfinite(value):
-            vals.append(value)
-    return vals
-
-
-def parse_ocr_readings_text(raw_text):
-    if raw_text is None:
-        return []
-
-    normalized = _normalize_ocr_token(str(raw_text))
-    tokens = re.findall(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)', normalized)
 
     vals = []
     for token in tokens:
@@ -910,105 +753,6 @@ def validate_rebound_inputs(
         "core_coeff": ct_num,
         "selected_formulas": normalized_formulas,
     }
-
-
-def extract_numbers_from_image(image_input, ocr_mode="정밀"):
-    try:
-        import cv2
-
-        if isinstance(image_input, Image.Image):
-            image = image_input.copy()
-        else:
-            image = Image.open(image_input)
-
-        if image.mode not in ("RGB", "RGBA", "L"):
-            image = image.convert("RGB")
-
-        max_width = 800
-        if image.width > max_width:
-            ratio = max_width / float(image.width)
-            new_height = int((float(image.height) * float(ratio)))
-            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
-            image = image.resize((max_width, new_height), resample)
-
-        image_np = np.array(image)
-
-        if image_np.ndim == 2:
-            gray = image_np
-        elif image_np.shape[2] == 4:
-            gray = cv2.cvtColor(image_np, cv2.COLOR_RGBA2GRAY)
-        else:
-            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-
-        blur = cv2.medianBlur(gray, 3)
-
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
-        th_adapt = cv2.adaptiveThreshold(
-            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, 11, 2
-        )
-        _, th_otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        _, th_clahe_otsu = cv2.threshold(clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        morph = cv2.morphologyEx(th_adapt, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8), iterations=1)
-
-        if ocr_mode == "빠른":
-            variants = [gray, th_adapt]
-        else:
-            variants = [gray, th_adapt, th_otsu, th_clahe_otsu, morph]
-
-        reader = load_ocr_model()
-
-        best_values = []
-        best_score = -1e9
-
-        for processed in variants:
-            result_detail = reader.readtext(
-                processed,
-                detail=1,
-                paragraph=False,
-                allowlist='0123456789.:- '
-            )
-            values = _select_best_20_readings(result_detail, target_count=20)
-
-            score = len(values) * 5
-            if len(values) >= 20:
-                score += 100
-            in_range = sum(1 for v in values if 10 <= v <= 100)
-            score += in_range * 2
-
-            confs = [float(item[2]) for item in result_detail if len(item) >= 3]
-            if confs:
-                score += float(np.mean(confs)) * 10
-
-            if score > best_score:
-                best_score = score
-                best_values = values
-
-        if not best_values:
-            fallback = reader.readtext(gray, detail=0, allowlist='0123456789. ')
-            fallback_nums = []
-            for token in fallback:
-                nums = re.findall(r'\d+(?:\.\d+)?', _normalize_ocr_token(str(token)))
-                for n in nums:
-                    try:
-                        fallback_nums.append(float(n))
-                    except Exception:
-                        pass
-            best_values = fallback_nums[:20]
-
-        return _format_readings_for_text(best_values)
-
-    except ImportError as e:
-        # [수정 #2] easyocr / opencv-python 등 OCR 의존성 미설치를 일반 오류와 분리.
-        # 로그만 봐도 '라이브러리 누락'인지 '이미지 처리 실패'인지 즉시 구분됩니다.
-        logger.error(
-            "OCR 의존성 미설치로 숫자 인식을 건너뜁니다 "
-            "(pip install easyocr opencv-python-headless): %s", e
-        )
-        return ""
-    except Exception as e:
-        logger.exception("OCR 처리 중 오류 발생: %s", e)
-        return ""
 
 
 def get_angle_correction(R_val, angle):
@@ -1269,7 +1013,7 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
                            fontName=font_name, fontSize=9, leading=13)
 
     story = []
-    story.append(Paragraph(f"{project_name}", title_style))
+    story.append(Paragraph(_safe_html(project_name), title_style))
     story.append(Paragraph(f"비파괴검사 결과 보고서 ({report_type})", h2))
     story.append(Paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}", body))
     story.append(Spacer(1, 6*mm))
@@ -1306,7 +1050,7 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
         td.setStyle(TableStyle([
             ('FONTNAME', (0, 0), (-1, -1), font_name),
             ('FONTSIZE', (0, 0), (-1, -1), 7.5),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#137DA1")),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0F4C81")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('GRID', (0, 0), (-1, -1), 0.3, colors.grey),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -1317,7 +1061,7 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
 
     if notes:
         story.append(Paragraph("■ 비고", h2))
-        story.append(Paragraph(str(notes).replace("\n", "<br/>"), body))
+        story.append(Paragraph(_safe_html(notes).replace("\n", "<br/>"), body))
 
     story.append(Spacer(1, 8*mm))
     story.append(Paragraph(
@@ -1345,6 +1089,106 @@ def to_excel(df):
             continue
 
     raise RuntimeError("엑셀 저장 엔진(xlsxwriter/openpyxl)이 설치되어 있지 않습니다.") from last_err
+
+
+CHECKPOINT_SCHEMA_VERSION = 1
+
+
+def build_checkpoint_payload(state, now=None):
+    """진행상황 저장용 payload를 만든다.
+    state는 st.session_state처럼 .get(key, default)을 지원하는 매핑이면 된다
+    (테스트에서는 plain dict를 넘긴다)."""
+    if now is None:
+        now = datetime.now(timezone(timedelta(hours=9)))
+
+    formula_mode_label = state.get("reb_formula_mode_label")
+    if formula_mode_label == "공식 직접 선택":
+        selected_formulas = list(state.get("reb_selected_methods") or [])
+    else:
+        selected_formulas = None
+
+    point_policy_label = state.get("reb_point_policy_label")
+    point_count_policy = (
+        normalize_rebound_point_policy(point_policy_label)
+        if point_policy_label else DEFAULT_REBOUND_POINT_POLICY
+    )
+
+    return {
+        "schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "saved_at": now.isoformat(),
+        "project_name": state.get("proj_name", "") or "",
+        "rebound": {
+            "records": list(state.get("rebound_records", []) or []),
+            "add_point_name": state.get("add_point_name") or "P1",
+            "readings_text": state.get("reb_src_txt", "") or "",
+            "in_progress_inputs": {
+                "angle": state.get("reb_angle"),
+                "days": state.get("reb_days"),
+                "design_fck": state.get("reb_fck"),
+                "core_coeff": state.get("reb_ct"),
+                "selected_formulas": selected_formulas,
+                "point_count_policy": point_count_policy,
+            },
+        },
+    }
+
+
+def apply_checkpoint_payload(payload):
+    """체크포인트 JSON을 st.session_state에 반영할 {key: value} 딕셔너리로 변환한다.
+    형식이 잘못되면 사용자에게 그대로 보여줄 수 있는 한국어 메시지의 ValueError를 던진다."""
+    if not isinstance(payload, dict):
+        raise ValueError("체크포인트 파일 형식이 올바르지 않습니다 (JSON 객체가 아님).")
+
+    version = payload.get("schema_version")
+    if version != CHECKPOINT_SCHEMA_VERSION:
+        raise ValueError(
+            f"지원하지 않는 체크포인트 파일 버전입니다: {version!r} "
+            f"(현재 지원 버전: {CHECKPOINT_SCHEMA_VERSION})."
+        )
+
+    rebound = payload.get("rebound")
+    if not isinstance(rebound, dict):
+        raise ValueError("체크포인트 파일에 'rebound' 데이터가 없습니다.")
+
+    records = rebound.get("records")
+    if not isinstance(records, list):
+        raise ValueError("체크포인트 파일의 반발경도 지점 데이터(records)가 올바르지 않습니다.")
+
+    in_progress = rebound.get("in_progress_inputs") or {}
+
+    angle_value = in_progress.get("angle")
+    if angle_value is not None and angle_value not in ALLOWED_REBOUND_ANGLES:
+        raise ValueError(f"체크포인트 파일의 타격각도 값이 올바르지 않습니다: {angle_value!r}")
+
+    selected_formulas = in_progress.get("selected_formulas")
+    if selected_formulas is not None:
+        invalid_names = [f for f in selected_formulas if f not in REBOUND_FORMULA_NAMES]
+        if invalid_names:
+            raise ValueError(f"체크포인트 파일에 알 수 없는 공식이 포함되어 있습니다: {invalid_names}")
+    formula_mode_label = "공식 직접 선택" if selected_formulas is not None else "설계강도 기준 자동추천"
+
+    point_count_policy = in_progress.get("point_count_policy") or DEFAULT_REBOUND_POINT_POLICY
+    point_policy_label = get_rebound_point_policy_label(point_count_policy)
+
+    add_point_name = rebound.get("add_point_name") or f"P{len(records) + 1}"
+
+    return {
+        "proj_name": payload.get("project_name", "") or "",
+        "rebound_records": records,
+        "rebound_data": [
+            r.get("평균") for r in records if isinstance(r, dict) and "평균" in r
+        ],
+        "add_point_name": add_point_name,
+        "reb_src_txt": rebound.get("readings_text", "") or "",
+        "reb_paste_area": rebound.get("readings_text", "") or "",
+        "reb_angle": in_progress.get("angle"),
+        "reb_days": in_progress.get("days"),
+        "reb_fck": in_progress.get("design_fck"),
+        "reb_ct": in_progress.get("core_coeff"),
+        "reb_selected_methods": selected_formulas or [],
+        "reb_formula_mode_label": formula_mode_label,
+        "reb_point_policy_label": point_policy_label,
+    }
 
 
 def run_validation_tests():
@@ -1482,6 +1326,68 @@ def run_validation_tests():
         "20개이상_24개중5개기각": res7f,
     }))
 
+    checkpoint_state_full = {
+        "proj_name": "테스트 시설물",
+        "rebound_records": [{"지점": "P1", "평균": 33.5, "과기부": 33.5}],
+        "add_point_name": "P2",
+        "reb_src_txt": "54 56 55",
+        "reb_angle": 90,
+        "reb_days": 3000,
+        "reb_fck": 40.0,
+        "reb_ct": 1.0,
+        "reb_formula_mode_label": "공식 직접 선택",
+        "reb_selected_methods": ["과기부", "권영웅"],
+        "reb_point_policy_label": "정확히 20개",
+    }
+    fixed_now = datetime(2026, 7, 28, 10, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    payload_full = build_checkpoint_payload(checkpoint_state_full, now=fixed_now)
+    restored_full = apply_checkpoint_payload(payload_full)
+
+    tc8a_pass = (
+        payload_full["saved_at"] == "2026-07-28T10:00:00+09:00"
+        and restored_full["proj_name"] == "테스트 시설물"
+        and restored_full["rebound_records"] == checkpoint_state_full["rebound_records"]
+        and restored_full["rebound_data"] == [33.5]
+        and restored_full["add_point_name"] == "P2"
+        and restored_full["reb_src_txt"] == "54 56 55"
+        and restored_full["reb_angle"] == 90
+        and restored_full["reb_formula_mode_label"] == "공식 직접 선택"
+        and restored_full["reb_selected_methods"] == ["과기부", "권영웅"]
+    )
+
+    checkpoint_state_auto = dict(checkpoint_state_full)
+    checkpoint_state_auto["reb_formula_mode_label"] = "설계강도 기준 자동추천"
+    payload_auto = build_checkpoint_payload(checkpoint_state_auto, now=fixed_now)
+    restored_auto = apply_checkpoint_payload(payload_auto)
+    tc8b_pass = (
+        payload_auto["rebound"]["in_progress_inputs"]["selected_formulas"] is None
+        and restored_auto["reb_formula_mode_label"] == "설계강도 기준 자동추천"
+        and restored_auto["reb_selected_methods"] == []
+    )
+
+    checkpoint_errors = {}
+    for bad_name, bad_payload in [
+        ("스키마 버전 불일치", {**payload_full, "schema_version": 99}),
+        ("rebound 누락", {k: v for k, v in payload_full.items() if k != "rebound"}),
+        ("records가 리스트 아님", {**payload_full, "rebound": {**payload_full["rebound"], "records": "x"}}),
+        ("잘못된 타격각도", {**payload_full, "rebound": {**payload_full["rebound"], "in_progress_inputs": {**payload_full["rebound"]["in_progress_inputs"], "angle": 30}}}),
+        ("알 수 없는 공식", {**payload_full, "rebound": {**payload_full["rebound"], "in_progress_inputs": {**payload_full["rebound"]["in_progress_inputs"], "selected_formulas": ["존재하지않는공식"]}}}),
+    ]:
+        try:
+            apply_checkpoint_payload(bad_payload)
+            checkpoint_errors[bad_name] = "에러 없이 통과함(실패)"
+        except ValueError as e:
+            checkpoint_errors[bad_name] = str(e)
+    tc8c_pass = all(
+        "에러 없이 통과함" not in v for v in checkpoint_errors.values()
+    )
+
+    results.append(("TC8(체크포인트 저장/복원 왕복)", tc8a_pass and tc8b_pass and tc8c_pass, {
+        "수동선택_왕복": tc8a_pass,
+        "자동추천_왕복": tc8b_pass,
+        "잘못된_파일_거부": checkpoint_errors,
+    }))
+
     return results
 
 
@@ -1498,11 +1404,23 @@ def run_validation_tests():
 
 with st.sidebar:
     st.header("⚙️ 프로젝트 정보")
-    p_name = st.text_input("프로젝트명", "OO시설물 정밀점검")
+    p_name = st.text_input("프로젝트명", "OO시설물 정밀점검", key="proj_name")
     st.divider()
     st.caption("시설물안전법 및 세부지침 준수")
 
 render_app_header(p_name)
+
+
+def _checkpoint_state_hash(payload):
+    payload_for_hash = {k: v for k, v in payload.items() if k != "saved_at"}
+    return hashlib.blake2b(
+        json.dumps(payload_for_hash, sort_keys=True, ensure_ascii=False).encode("utf-8"),
+        digest_size=8,
+    ).hexdigest()
+
+
+checkpoint_panel = st.container(border=True)
+checkpoint_msg = st.container()
 
 tab1, tab2, tab4 = st.tabs(["📖 점검 매뉴얼", "🔨 반발경도", "📈 통계·비교"])
 
@@ -1583,173 +1501,40 @@ with tab2:
         st.caption("📱 모바일/태블릿 최적화 모드")
         inject_numeric_keypad()   # [숫자패드] 측정값 입력 요소에 숫자 키패드 강제
 
-    mode = st.radio("입력 방식", ["단일 지점 (카메라/파일)", "다중 지점 (엑셀 업로드)"], horizontal=True)
+    mode = st.radio("입력 방식", ["단일 지점 (직접 입력)", "다중 지점 (엑셀 업로드)"], horizontal=True)
 
     if mode.startswith("단일"):
-        with st.expander("🟦 1단계 · 측정값 확보 (촬영·OCR·붙여넣기)", expanded=False):
-            st.markdown("##### 📸 측정값 입력")
-
-            ocr_mode = st.radio(
-                "OCR 처리 모드",
-                ["빠른", "정밀"],
-                horizontal=not mobile_client,
-                index=1,
-                help="빠른: 처리속도 우선 / 정밀: 인식률 우선"
-            )
-
-            cam_mode = st.toggle("💻 웹캠(PC) 모드로 전환하기", value=False)
-
-            img_file = None
-            rot_val = 0
-
-            if not cam_mode:
-                st.caption("📱 모바일: '사진 촬영' 선택 시 **후면 카메라(고화질/자동초점)**가 실행됩니다.")
-                img_file = st.file_uploader("촬영 버튼 또는 갤러리 선택", type=['png', 'jpg', 'jpeg', 'bmp'])
-            else:
-                st.caption("💡 PC/노트북 웹캠을 사용할 때 적합합니다.")
-                img_file = st.camera_input("측정 기록표를 촬영하세요")
-
-            if img_file:
-                st.caption("이미지가 회전되어 보이면 아래에서 회전값을 조정하세요. 회전값이 바뀌면 OCR을 다시 실행합니다.")
-                rot_val = st.radio("이미지 회전(반시계)", [0, 90, 180, 270], index=0, horizontal=True, key="img_rot")
-
-            if img_file is not None:
-                file_bytes = None
-                file_hash = ""
-                file_size = getattr(img_file, "size", 0)
-
-                try:
-                    file_bytes = img_file.getvalue()
-                    file_size = len(file_bytes)
-                    file_hash = hashlib.blake2b(file_bytes, digest_size=8).hexdigest()
-                except Exception:
-                    file_hash = ""
-
-                try:
-                    upload_sig = (
-                        getattr(img_file, "name", ""),
-                        file_size,
-                        file_hash,
-                        rot_val,
-                        ocr_mode,
-                        cam_mode,
-                    )
-                except Exception:
-                    upload_sig = (
-                        str(img_file),
-                        file_hash,
-                        rot_val,
-                        ocr_mode,
-                        cam_mode,
-                    )
-
-                sig_changed = st.session_state.get("ocr_upload_sig") != upload_sig
-
-                if sig_changed:
-                    st.session_state["ocr_upload_sig"] = upload_sig
-                    st.session_state.pop("ocr_result", None)
-                    st.session_state.pop("ocr_error", None)
-                    st.session_state.pop("ocr_processed_sig", None)
-
-                rerun_ocr = st.button(
-                    "🔁 OCR 다시 실행",
-                    key="btn_rerun_ocr",
-                    use_container_width=True,
-                    help="이미지, 회전값, OCR 모드는 그대로 두고 숫자 인식만 다시 실행합니다."
-                )
-
-                should_run_ocr = (
-                    rerun_ocr
-                    or st.session_state.get("ocr_processed_sig") != upload_sig
-                )
-
-                if should_run_ocr:
-                    st.session_state["ocr_processed_sig"] = upload_sig
-
-                    with st.spinner("이미지 처리 및 숫자 인식 중..."):
-                        recognized_text = ""
-
-                        try:
-                            if file_bytes is not None:
-                                image_source = io.BytesIO(file_bytes)
-                            else:
-                                try:
-                                    img_file.seek(0)
-                                except Exception:
-                                    pass
-                                image_source = img_file
-
-                            pil_image = Image.open(image_source)
-
-                            if rot_val != 0:
-                                pil_image = pil_image.rotate(rot_val, expand=True)
-
-                            recognized_text = extract_numbers_from_image(
-                                pil_image,
-                                ocr_mode=ocr_mode
-                            )
-
-                        except Exception as e:
-                            logger.exception("OCR 실행 중 오류 발생: %s", e)
-                            recognized_text = ""
-                            st.session_state["ocr_error"] = (
-                                "OCR 처리 중 오류가 발생했습니다. "
-                                "이미지를 다시 업로드하거나 직접 입력해주세요."
-                            )
-
-                        if recognized_text:
-                            st.session_state["ocr_result"] = recognized_text
-                            st.session_state.pop("ocr_error", None)
-                        else:
-                            st.session_state.pop("ocr_result", None)
-                            if "ocr_error" not in st.session_state:
-                                st.session_state["ocr_error"] = (
-                                    "숫자를 인식하지 못했습니다. 직접 입력해주세요."
-                                )
-
-                recognized_text = st.session_state.get("ocr_result", "")
-
-                if recognized_text:
-                    ocr_vals = parse_readings_text(recognized_text)
-
-                    if should_run_ocr:
-                        st.success(f"인식 성공 ({len(ocr_vals)}개): {recognized_text}")
-                    else:
-                        st.info(f"저장된 OCR 결과 사용 중 ({len(ocr_vals)}개): {recognized_text}")
-
-                    if len(ocr_vals) != 20:
-                        st.warning("자동 인식값이 20개가 아닙니다. 아래 입력판에서 확인/수정 후 계산하세요.")
-
-                elif st.session_state.get("ocr_error"):
-                    st.warning(st.session_state["ocr_error"])
-
-        with st.expander("⚙️ 2단계 · 보정조건 (방향·재령·강도·정책·공식)", expanded=True):
+        with st.expander("⚙️ 1단계 · 보정조건 (방향·재령·강도·정책·공식)", expanded=True):
             # ---- 입력 파라미터: 모바일은 단일 컬럼, 데스크톱은 4열 ----
             if mobile_client:
                 angle = st.selectbox(
                     "타격 방향",
                     [90, 45, 0, -45, -90],
-                    format_func=lambda x: {90: "+90°(상향수직)", 45: "+45°(상향경사)", 0: "0°(수평)", -45: "-45°(하향경사)", -90: "-90°(하향수직)"}[x]
+                    format_func=lambda x: {90: "+90°(상향수직)", 45: "+45°(상향경사)", 0: "0°(수평)", -45: "-45°(하향경사)", -90: "-90°(하향수직)"}[x],
+                    key="reb_angle"
                 )
                 days = st.number_input("재령(일)", 1, 10000, 3000,
-                                      help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용")
-                fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
-                ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01)
+                                      help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용",
+                                      key="reb_days")
+                fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="reb_fck")
+                ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01, key="reb_ct")
             else:
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     angle = st.selectbox(
                         "타격 방향",
                         [90, 45, 0, -45, -90],
-                        format_func=lambda x: {90: "+90°(상향수직)", 45: "+45°(상향경사)", 0: "0°(수평)", -45: "-45°(하향경사)", -90: "-90°(하향수직)"}[x]
+                        format_func=lambda x: {90: "+90°(상향수직)", 45: "+45°(상향경사)", 0: "0°(수평)", -45: "-45°(하향경사)", -90: "-90°(하향수직)"}[x],
+                        key="reb_angle"
                     )
                 with c2:
                     days = st.number_input("재령(일)", 1, 10000, 3000,
-                                          help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용")
+                                          help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용",
+                                          key="reb_days")
                 with c3:
-                    fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0)
+                    fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="reb_fck")
                 with c4:
-                    ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01)
+                    ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01, key="reb_ct")
 
             # 측정점수 정책 선택
             point_policy_labels = [
@@ -1764,7 +1549,8 @@ with tab2:
                 help=(
                     "기본값은 20개입니다. 추가 측정값을 평균 산정에 포함해야 하는 경우에만 "
                     "20개 이상 허용을 선택하세요."
-                )
+                ),
+                key="reb_point_policy_label"
             )
             point_count_policy = normalize_rebound_point_policy(point_policy_label)
             st.info(f"측정점수 정책: {get_rebound_point_policy_description(point_count_policy)}")
@@ -1779,7 +1565,8 @@ with tab2:
                 help=(
                     "자동추천은 설계강도 기준으로 평균 산정 공식을 자동 적용합니다. "
                     "직접 선택은 책임기술자 판단으로 평균 산정에 사용할 공식을 지정할 때 사용합니다."
-                )
+                ),
+                key="reb_formula_mode_label"
             )
 
             if formula_mode_label == "설계강도 기준 자동추천":
@@ -1790,14 +1577,15 @@ with tab2:
                     "평균 산정 적용 공식",
                     formula_opts,
                     default=[],
-                    help="직접 선택 모드에서는 1개 이상의 공식을 선택해야 계산할 수 있습니다."
+                    help="직접 선택 모드에서는 1개 이상의 공식을 선택해야 계산할 수 있습니다.",
+                    key="reb_selected_methods"
                 )
                 if selected_methods:
                     st.info(f"수동 선택 적용 공식: {', '.join(selected_methods)}")
                 else:
                     st.warning("직접 선택 모드에서는 평균 산정에 사용할 공식을 1개 이상 선택하세요.")
 
-        with st.expander("✍️ 3단계 · 측정값 격자 입력 (실시간 기각 확인)", expanded=False):
+        with st.expander("✍️ 2단계 · 측정값 입력 (텍스트·격자)", expanded=False):
             # ============ 측정값 입력판 (격자형 + 실시간 기각 미리보기) ============
             GRID_COLS = 5  # 현장 측정 기록표와 동일한 5칸 가로 배열
 
@@ -1809,15 +1597,7 @@ with tab2:
             if 'reb_grid_ver' not in st.session_state:
                 st.session_state['reb_grid_ver'] = 0
 
-            # OCR 인식 결과가 새로 들어오면 텍스트칸·격자에 즉시 반영(중복 적용 방지)
-            _ocr_txt = st.session_state.get('ocr_result')
-            if _ocr_txt and st.session_state.get('reb_ocr_applied') != _ocr_txt:
-                st.session_state['reb_src_txt'] = _ocr_txt
-                st.session_state['reb_paste_area'] = _ocr_txt
-                st.session_state['reb_grid_ver'] = st.session_state.get('reb_grid_ver', 0) + 1
-                st.session_state['reb_ocr_applied'] = _ocr_txt
-
-            # [중첩 expander 금지] 3단계 expander 안이므로 내부는 일반 블록으로 표시
+            # [중첩 expander 금지] 2단계 expander 안이므로 내부는 일반 블록으로 표시
             st.markdown("###### 📋 텍스트로 붙여넣기 / 한 번에 수정")
             st.text_area(
                 "측정값 (공백·쉼표·줄바꿈으로 구분, 소수점은 58.4처럼 점 사용)",
@@ -1906,8 +1686,8 @@ with tab2:
                         cells_html += (
                             "<div style='position:relative;padding:9px 0;text-align:center;"
                             "font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;"
-                            "background:rgba(214,40,40,0.14);border:1.5px solid #D62828;"
-                            "border-radius:8px;color:#D62828;'>"
+                            "background:rgba(220,38,38,0.14);border:1.5px solid #DC2626;"
+                            "border-radius:8px;color:#DC2626;'>"
                             f"{v_txt}<span style='position:absolute;top:2px;right:5px;"
                             "font-size:10px;'>⚠</span></div>"
                         )
@@ -2098,14 +1878,14 @@ with tab2:
                 x=alt.X('강도:Q', title='추정강도 (MPa)'),
             )
             bars = base_chart.mark_bar(cornerRadiusEnd=3, height=24).encode(
-                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#1B9E77'), alt.value('#D62828')),
+                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#16A34A'), alt.value('#DC2626')),
                 tooltip=[alt.Tooltip('공식:N'), alt.Tooltip('강도:Q', format='.2f', title='강도(MPa)')]
             )
             value_labels = base_chart.mark_text(align='left', baseline='middle', dx=5, fontWeight='bold').encode(
                 text=alt.Text('강도:Q', format='.1f')
             )
             rule_chart = alt.Chart(pd.DataFrame({'x': [result_fck]})).mark_rule(
-                color='#D62828', strokeDash=[5, 3], size=2).encode(x='x:Q')
+                color='#DC2626', strokeDash=[5, 3], size=2).encode(x='x:Q')
 
             st.altair_chart((bars + rule_chart + value_labels).properties(height=260), use_container_width=True)
 
@@ -2472,8 +2252,8 @@ with tab4:
                     y=alt.Y("변동계수CV(%):Q"),
                     color=alt.condition(
                         alt.datum["공식"] == best["공식"],
-                        alt.value("#1B9E77"),
-                        alt.value("#95a5a6")
+                        alt.value("#16A34A"),
+                        alt.value("#64748B")
                     )
                 ).properties(height=280, title="공식별 변동계수 비교 (낮을수록 안정적)")
                 st.altair_chart(cv_chart, use_container_width=True)
@@ -2489,7 +2269,7 @@ with tab4:
                     tooltip=["지점", "공식", "강도"]
                 ).properties(height=300, title="지점별 공식 결과 분포")
                 fck_rule = alt.Chart(pd.DataFrame({"y": [st_fck]})).mark_rule(
-                    color="#D62828", strokeDash=[5, 3]).encode(y="y")
+                    color="#DC2626", strokeDash=[5, 3]).encode(y="y")
                 st.altair_chart(point_chart + fck_rule, use_container_width=True)
 
                 with st.expander("📄 통계·비교 PDF 보고서 다운로드", expanded=False):
@@ -2561,9 +2341,96 @@ with tab4:
 
             chart = alt.Chart(pd.DataFrame({"번호": range(1, len(data) + 1), "강도": data})).mark_bar().encode(
                 x='번호:O', y='강도:Q',
-                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#1B9E77'), alt.value('#D62828'))
+                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#16A34A'), alt.value('#DC2626'))
             )
-            rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='#D62828', strokeDash=[5, 3], size=2).encode(y='y')
+            rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='#DC2626', strokeDash=[5, 3], size=2).encode(y='y')
             st.altair_chart(chart + rule, use_container_width=True)
         elif parsed:
             st.warning("최소 2개 이상의 숫자가 필요합니다.")
+
+with checkpoint_panel:
+    cp_col1, cp_col2, cp_col3 = st.columns([1, 1, 2])
+
+    _current_payload = build_checkpoint_payload(st.session_state)
+    _current_hash = _checkpoint_state_hash(_current_payload)
+
+    with cp_col1:
+        _checkpoint_json = json.dumps(_current_payload, ensure_ascii=False, indent=2)
+        _safe_proj_name = re.sub(r'[\\/*?:"<>|]', "_", st.session_state.get("proj_name", "") or "프로젝트")
+        _checkpoint_filename = f"{_safe_proj_name}_진행상황_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+        if st.download_button(
+            "💾 진행상황 저장",
+            data=_checkpoint_json.encode("utf-8"),
+            file_name=_checkpoint_filename,
+            mime="application/json",
+            use_container_width=True,
+        ):
+            st.session_state["_checkpoint_saved_hash"] = _current_hash
+
+    with cp_col2:
+        _checkpoint_file = st.file_uploader(
+            "📂 불러오기", type=["json"], key="checkpoint_uploader"
+        )
+
+    with cp_col3:
+        _saved_hash = st.session_state.get("_checkpoint_saved_hash")
+        _has_data = bool(st.session_state.get("rebound_records"))
+        if _saved_hash is None:
+            if _has_data:
+                st.caption("이번 세션에서 아직 저장하지 않았습니다.")
+        elif _current_hash != _saved_hash:
+            st.caption("⚠ 마지막 저장 이후 변경사항이 있습니다.")
+
+if _checkpoint_file is not None:
+    _upload_sig = (_checkpoint_file.name, _checkpoint_file.size)
+    if st.session_state.get("_checkpoint_upload_sig") != _upload_sig:
+        st.session_state["_checkpoint_upload_sig"] = _upload_sig
+        try:
+            _payload = json.loads(_checkpoint_file.getvalue().decode("utf-8"))
+            _pending_updates = apply_checkpoint_payload(_payload)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            st.session_state["_checkpoint_load_error"] = str(e)
+            st.session_state["_checkpoint_pending_restore"] = None
+        else:
+            st.session_state["_checkpoint_load_error"] = None
+            st.session_state["_checkpoint_pending_restore"] = {
+                "updates": _pending_updates,
+                "project_name": _payload.get("project_name", ""),
+                "n_records": len(_payload.get("rebound", {}).get("records", [])),
+                "saved_at": _payload.get("saved_at", "알 수 없음"),
+            }
+
+if st.session_state.get("_checkpoint_load_error"):
+    with checkpoint_msg:
+        st.error(f"불러오기 실패: {st.session_state['_checkpoint_load_error']}")
+
+_pending_restore = st.session_state.get("_checkpoint_pending_restore")
+if _pending_restore:
+    @st.dialog("진행상황 불러오기 확인")
+    def _confirm_checkpoint_restore():
+        st.write(
+            f"**불러올 파일:** {_pending_restore['project_name']} · "
+            f"지점 {_pending_restore['n_records']}개 · "
+            f"저장 시각 {_pending_restore['saved_at']}"
+        )
+        st.warning("지금 화면의 작업 중인 내용은 사라집니다.")
+        dlg_col1, dlg_col2 = st.columns(2)
+        if dlg_col1.button("예, 불러오기", type="primary", use_container_width=True):
+            for _k, _v in _pending_restore["updates"].items():
+                if _v is None:
+                    continue
+                st.session_state[_k] = _v
+            st.session_state["last_added_signature"] = None
+            st.session_state["last_add_message"] = None
+            st.session_state["reb_grid_ver"] = st.session_state.get("reb_grid_ver", 0) + 1
+            st.session_state["last_rebound_result"] = None
+            st.session_state["last_rebound_meta"] = {}
+            st.session_state["last_rebound_error"] = None
+            st.session_state["_checkpoint_saved_hash"] = None
+            st.session_state["_checkpoint_pending_restore"] = None
+            st.rerun()
+        if dlg_col2.button("취소", use_container_width=True):
+            st.session_state["_checkpoint_pending_restore"] = None
+            st.rerun()
+
+    _confirm_checkpoint_restore()
