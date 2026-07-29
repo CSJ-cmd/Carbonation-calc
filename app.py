@@ -426,29 +426,32 @@ def load_ci_logo_data_uri(path=CI_LOGO_PATH):
 
 
 def render_app_header(project_name):
+    """앱 상단 헤더.
+
+    [중요] HTML 은 반드시 '한 줄'로 조립합니다.
+    st.markdown 의 HTML 블록은 마크다운 규칙상 '공백만 있는 줄'을 만나면 그 자리에서
+    끝나고, 뒤따르는 들여쓴 줄들이 코드 블록으로 해석돼 태그가 그대로 노출됩니다.
+    CI 파일이 없는 환경(예: 이미지가 빠진 배포본)에서는 {brand} 자리가 비면서
+    정확히 그 현상이 발생했습니다. 여러 줄 + 조건부 삽입 조합을 쓰지 마세요.
+    """
     ci_uri = load_ci_logo_data_uri()
-    if ci_uri:
-        brand = (
-            f'<img class="app-hero-ci" src="{ci_uri}" alt="서울시설공단" />'
-            '<div class="app-hero-rule"></div>'
-        )
-    else:
-        brand = ""
-    st.markdown(
-        f"""
-        <div class="app-hero">
-            {brand}
-            <div class="app-hero-text">
-                <div class="app-hero-title">구조물 안전진단 통합 평가 Pro</div>
-                <div class="app-hero-sub">
-                    프로젝트: <b>{_safe_html(project_name)}</b> ·
-                    반발경도 입력, 보정계산, 통계 비교, PDF/Excel 출력까지 한 화면에서 처리합니다.
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    brand = (
+        f'<img class="app-hero-ci" src="{ci_uri}" alt="서울시설공단" />'
+        '<div class="app-hero-rule"></div>'
+    ) if ci_uri else ""
+
+    html_parts = [
+        '<div class="app-hero">',
+        brand,
+        '<div class="app-hero-text">',
+        '<div class="app-hero-title">구조물 안전진단 통합 평가 Pro</div>',
+        '<div class="app-hero-sub">프로젝트: <b>',
+        _safe_html(project_name),
+        '</b> · 반발경도 입력, 보정계산, 통계 비교, PDF/Excel 출력까지 한 화면에서 처리합니다.</div>',
+        '</div>',
+        '</div>',
+    ]
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 
 def render_workflow_header(current_index=0):
@@ -485,12 +488,10 @@ def render_workflow_header(current_index=0):
 
 def render_step_heading(title, description=""):
     st.markdown(
-        f"""
-        <div class="step-title">
-            <b>{_safe_html(title)}</b>
-            <span>{_safe_html(description)}</span>
-        </div>
-        """,
+        f'<div class="step-title">'
+        f'<b>{_safe_html(title)}</b>'
+        f'<span>{_safe_html(description)}</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
@@ -2137,23 +2138,23 @@ with tab2:
 
             st.markdown(
                 f"""
-                <div class="result-hero">
-                  <div>
-                    <div class="result-label">평균 추정 압축강도 (코어보정 반영)</div>
-                    <div class="result-value" style="color:{grade_color};">{mean_s:.2f}<span class="result-unit">MPa</span></div>
-                    <div class="result-note">{_safe_html(grade_msg)}</div>
-                  </div>
-                  <div>
-                    <div class="result-label">설계강도 대비</div>
-                    <div class="result-value">{ratio:.0f}<span class="result-unit">%</span></div>
-                    <div class="result-note">설계기준강도 {result_fck:.0f} MPa</div>
-                  </div>
-                  <div>
-                    <div class="result-label">참고 검토등급</div>
-                    <span class="result-grade" style="background:{grade_color};">{_safe_html(grade)}</span>
-                    <div class="result-note">최종 판정은 책임기술자 검토 대상</div>
-                  </div>
-                </div>
+<div class="result-hero">
+<div>
+<div class="result-label">평균 추정 압축강도 (코어보정 반영)</div>
+<div class="result-value" style="color:{grade_color};">{mean_s:.2f}<span class="result-unit">MPa</span></div>
+<div class="result-note">{_safe_html(grade_msg)}</div>
+</div>
+<div>
+<div class="result-label">설계강도 대비</div>
+<div class="result-value">{ratio:.0f}<span class="result-unit">%</span></div>
+<div class="result-note">설계기준강도 {result_fck:.0f} MPa</div>
+</div>
+<div>
+<div class="result-label">참고 검토등급</div>
+<span class="result-grade" style="background:{grade_color};">{_safe_html(grade)}</span>
+<div class="result-note">최종 판정은 책임기술자 검토 대상</div>
+</div>
+</div>
                 """,
                 unsafe_allow_html=True,
             )
