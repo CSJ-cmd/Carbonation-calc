@@ -10,7 +10,6 @@ import hashlib
 import html
 import json
 from datetime import datetime, timezone, timedelta
-from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -26,24 +25,43 @@ st.set_page_config(
 
 st.markdown("""
     <style>
+    /* =====================================================================
+       디자인 토큰
+       · 색상은 모두 흰 배경 기준 WCAG AA(본문 4.5:1, 흰 글씨 칩 4.5:1)를 만족하도록
+         조정했습니다. (기존 --warning:#F59E0B 는 흰 글씨 대비 2.1:1 로 판독 불가)
+       · --ctl-h : 버튼·업로드 등 모든 조작 요소의 공통 높이(정렬 통일의 기준값)
+       ===================================================================== */
     :root {
         --primary: #0F4C81;
-        --primary-dark: #073763;
+        --primary-dark: #0A3A63;
+        --primary-050: #EFF5FB;
+        --primary-100: #D9E7F4;
         --action: #2563EB;
-        --success: #16A34A;
-        --warning: #F59E0B;
+        --success: #15803D;
+        --success-050: #F1FAF4;
+        --success-100: #BBF7D0;
+        --warning: #B45309;
+        --warning-050: #FFF7ED;
+        --warning-100: #FDE4C4;
         --danger: #DC2626;
-        --bg-soft: #F8FAFC;
+        --neutral: #546274;
+        --bg-soft: #F6F8FB;
         --card: #FFFFFF;
-        --border: #E2E8F0;
+        --border: #E3E9F0;
+        --border-strong: #C7D2DF;
         --text-main: #0F172A;
-        --text-sub: #64748B;
+        --text-sub: #546274;
+        --r-md: 10px;
+        --r-lg: 14px;
+        --ctl-h: 42px;
+        --sh-1: 0 1px 2px rgba(15, 23, 42, 0.06);
+        --sh-2: 0 6px 18px rgba(15, 23, 42, 0.07);
         /* 기존 인라인 클래스 호환용 별칭 */
         --brand: #0F4C81;
-        --brand-deep: #073763;
-        --pass: #16A34A;
+        --brand-deep: #0A3A63;
+        --pass: #15803D;
         --fail: #DC2626;
-        --warn: #F59E0B;
+        --warn: #B45309;
     }
 
     .block-container {
@@ -51,116 +69,298 @@ st.markdown("""
         padding-bottom: 5rem !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
-        max-width: 100% !important;
-        background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 42%) !important;
+        max-width: 1440px !important;
+        background: transparent !important;
     }
+    [data-testid="stAppViewContainer"] { background: var(--bg-soft); }
 
-    /* 탭: 세그먼트형 + 그라데이션 활성 */
+    /* ---------------------------------------------------------------------
+       탭 — 세그먼트 컨트롤
+       Streamlit 1.60 은 BaseWeb 탭을 걷어내고 react-aria 로 바뀌어
+       [data-baseweb="tab"] 선택자가 더 이상 걸리지 않습니다.
+       현재 DOM: .stTabs > [role="tablist"] > [role="tab"][aria-selected]
+       (구버전 호환을 위해 baseweb 선택자도 함께 둡니다)
+       --------------------------------------------------------------------- */
+    .stTabs [role="tablist"],
     .stTabs [data-baseweb="tab-list"] {
-        gap: 6px; overflow-x: auto; white-space: nowrap;
-        scrollbar-width: none; padding-left: 2px; padding-bottom: 2px;
+        display: flex; gap: 4px;
+        padding: 5px !important;
+        margin-bottom: 18px;
+        background: var(--primary-050) !important;
+        border: 1px solid var(--border) !important;
+        border-bottom: 1px solid var(--border) !important;
+        border-radius: var(--r-lg) !important;
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+        overflow-x: auto; scrollbar-width: none;
     }
+    .stTabs [role="tablist"]::-webkit-scrollbar,
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+
+    .stTabs [role="tab"],
     .stTabs [data-baseweb="tab"] {
-        height: 46px; padding: 6px 16px;
-        background-color: #eef2f7; border-radius: 12px 12px 0 0;
-        font-size: 14px; font-weight: 600; color: #334155;
+        flex: 0 0 auto;
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 40px !important; min-height: 40px !important;
+        padding: 0 18px !important; margin: 0 !important;
+        background: transparent !important;
+        border: none !important; border-bottom: none !important;
+        border-radius: var(--r-md) !important;
+        color: var(--text-sub) !important;
+        white-space: nowrap;
+        transition: background-color .16s ease, color .16s ease, box-shadow .16s ease;
     }
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, var(--primary) 0%, var(--action) 100%) !important;
-        color: #ffffff !important;
+    .stTabs [role="tab"] p,
+    .stTabs [data-baseweb="tab"] p {
+        margin: 0 !important; font-size: 0.95rem !important; font-weight: 600 !important;
+        color: inherit !important;
+    }
+    .stTabs [role="tab"]:hover,
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(15, 76, 129, 0.07) !important; color: var(--text-main) !important;
+    }
+    .stTabs [role="tab"][aria-selected="true"],
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: var(--card) !important;
+        color: var(--primary) !important;
+        box-shadow: var(--sh-1), 0 2px 8px rgba(15, 76, 129, 0.10) !important;
+    }
+    .stTabs [role="tab"][aria-selected="true"] p,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] p { font-weight: 700 !important; }
+    /* 기본 테마가 그리는 하단 하이라이트 바 제거 */
+    .stTabs [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+    /* ---------------------------------------------------------------------
+       버튼 — 저장/불러오기/다운로드/팝오버 전부 같은 높이·반경·굵기
+       height 대신 min-height 를 써서 긴 라벨은 줄바꿈되며 높이만 늘어납니다.
+       --------------------------------------------------------------------- */
+    .stButton > button,
+    .stDownloadButton > button,
+    [data-testid="stPopover"] button,
+    [data-testid="stPopoverButton"],
+    [data-testid="stFormSubmitButton"] button {
+        min-height: var(--ctl-h) !important;
+        padding: 0 16px !important;
+        border-radius: var(--r-md) !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+        line-height: 1.3 !important;
+        transition: background-color .15s ease, border-color .15s ease,
+                    color .15s ease, box-shadow .15s ease;
+    }
+    .stButton > button[kind="primary"],
+    .stDownloadButton > button[kind="primary"],
+    [data-testid="stBaseButton-primary"] {
+        background: var(--primary) !important;
+        border: 1px solid var(--primary) !important;
+        color: #FFFFFF !important;
+        box-shadow: var(--sh-1) !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    .stDownloadButton > button[kind="primary"]:hover,
+    [data-testid="stBaseButton-primary"]:hover {
+        background: var(--primary-dark) !important; border-color: var(--primary-dark) !important;
+    }
+    .stButton > button[kind="secondary"],
+    .stDownloadButton > button[kind="secondary"],
+    [data-testid="stBaseButton-secondary"],
+    [data-testid="stPopoverButton"] {
+        background: var(--card) !important;
+        border: 1px solid var(--border-strong) !important;
+        color: var(--text-main) !important;
+    }
+    .stButton > button[kind="secondary"]:hover,
+    .stDownloadButton > button[kind="secondary"]:hover,
+    [data-testid="stBaseButton-secondary"]:hover,
+    [data-testid="stPopoverButton"]:hover {
+        background: var(--primary-050) !important;
+        border-color: var(--primary) !important;
+        color: var(--primary) !important;
     }
 
-    /* 버튼 */
-    .stButton > button { border-radius: 12px; font-weight: 700; }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, var(--primary) 0%, var(--action) 100%);
-        border: none;
+    /* 키보드 포커스 링 (마우스 클릭 시에는 나타나지 않음) */
+    button:focus-visible,
+    [role="tab"]:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible {
+        outline: 2px solid var(--action) !important;
+        outline-offset: 2px !important;
     }
-    .stButton > button[kind="primary"]:hover { filter: brightness(0.94); }
 
-    /* 메트릭 */
-    [data-testid="stMetricValue"] { font-size: 1.2rem !important; word-break: break-all; }
-    [data-testid="stMetricLabel"] { font-size: 0.85rem !important; }
+    /* 메트릭 — 숫자는 자릿수 정렬(tabular) */
+    [data-testid="stMetricValue"] {
+        font-size: 1.35rem !important; font-weight: 700 !important;
+        font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+        word-break: break-all; color: var(--text-main);
+    }
+    [data-testid="stMetricLabel"] { font-size: 0.82rem !important; color: var(--text-sub) !important; }
 
-    /* ===== 헤더 / 워크플로우 / 스텝 / 결과 / 추천 카드 ===== */
+    /* ===== 앱 헤더 =====
+       기존의 8px 파란 좌측 바 + 그라데이션을 걷어내고 1px 테두리 카드로 정리했습니다.
+       (굵은 색 좌측 바는 화면 곳곳에서 반복돼 '투박함'의 주된 원인이었습니다) */
     .app-hero {
-        padding: 18px 22px; margin: 0 0 16px 0;
-        border: 1px solid #dbeafe; border-left: 8px solid var(--primary);
-        border-radius: 18px;
-        background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
-        box-shadow: 0 10px 24px rgba(15, 76, 129, 0.08);
+        padding: 16px 20px; margin: 0 0 14px 0;
+        border: 1px solid var(--border); border-radius: var(--r-lg);
+        background: var(--card); box-shadow: var(--sh-1);
     }
-    .app-hero-title { font-size: 1.75rem; font-weight: 900; color: var(--text-main); margin-bottom: 4px; letter-spacing: -0.02em; }
-    .app-hero-sub { font-size: 0.98rem; color: var(--text-sub); line-height: 1.55; }
+    .app-hero-title { font-size: 1.3rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.02em; line-height: 1.3; }
+    .app-hero-sub { font-size: 0.88rem; color: var(--text-sub); line-height: 1.5; margin-top: 4px; }
 
-    .workflow-wrap {
-        display: flex; align-items: stretch; gap: 8px;
-        margin: 10px 0 18px 0; padding: 12px;
-        border: 1px solid #dbeafe; border-radius: 16px; background: #ffffff;
-        box-shadow: 0 6px 16px rgba(15, 76, 129, 0.05);
+    /* ===== 진행 스텝퍼 (완료 / 현재 / 예정 3단계 구분) ===== */
+    .wf { display: flex; align-items: flex-start; margin: 4px 0 20px 0; }
+    .wf-step {
+        position: relative; flex: 1 1 0; min-width: 0;
+        display: flex; flex-direction: column; align-items: center; gap: 7px;
+        padding: 0 4px; text-align: center;
     }
-    .workflow-step {
-        flex: 1; text-align: center; padding: 10px 8px; border-radius: 12px;
-        border: 1px solid #d8e6f8; background: #f8fbff; color: #334155;
-        font-size: 0.88rem; line-height: 1.35; min-height: 58px;
+    .wf-step::before {
+        content: ""; position: absolute; z-index: 0;
+        top: 15px; right: 50%; width: 100%; height: 2px; background: var(--border);
     }
-    .workflow-step b { font-size: 0.96rem; }
-    .workflow-step.active {
-        color: #ffffff; background: linear-gradient(135deg, var(--primary) 0%, var(--action) 100%);
-        border-color: var(--primary); box-shadow: 0 6px 14px rgba(37, 99, 235, 0.18);
+    .wf-step:first-child::before { display: none; }
+    .wf-step.is-done::before, .wf-step.is-current::before { background: var(--primary); }
+    .wf-num {
+        position: relative; z-index: 1;
+        width: 32px; height: 32px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.85rem; font-weight: 800; font-variant-numeric: tabular-nums;
+        background: var(--card); border: 2px solid var(--border); color: var(--text-sub);
     }
-    .workflow-arrow { align-self: center; color: var(--primary); font-weight: 900; padding: 0 2px; }
+    .wf-step.is-done .wf-num { background: var(--primary); border-color: var(--primary); color: #FFFFFF; }
+    .wf-step.is-current .wf-num {
+        background: var(--card); border-color: var(--primary); color: var(--primary);
+        box-shadow: 0 0 0 4px rgba(15, 76, 129, 0.13);
+    }
+    .wf-title { font-size: 0.85rem; font-weight: 700; color: var(--text-sub); line-height: 1.25; word-break: keep-all; }
+    .wf-step.is-done .wf-title, .wf-step.is-current .wf-title { color: var(--text-main); }
+    .wf-sub { font-size: 0.74rem; color: var(--text-sub); line-height: 1.3; word-break: keep-all; }
 
-    .step-title { margin: 10px 0; padding: 12px 14px; border-radius: 14px; border: 1px solid #dbeafe; background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%); }
-    .step-title b { color: var(--primary); font-size: 1.08rem; }
-    .step-title span { display: block; margin-top: 3px; color: var(--text-sub); font-size: 0.9rem; line-height: 1.5; }
+    /* ===== 섹션 제목 ===== */
+    .step-title { margin: 4px 0 16px 0; padding: 0 0 12px 0; border-bottom: 1px solid var(--border); }
+    .step-title b { display: block; color: var(--text-main); font-size: 1.15rem; font-weight: 800; letter-spacing: -0.015em; }
+    .step-title span { display: block; margin-top: 5px; color: var(--text-sub); font-size: 0.88rem; line-height: 1.55; }
 
+    /* ===== 결과 카드 ===== */
     .result-hero {
-        display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 14px;
-        padding: 18px 20px; margin: 14px 0;
-        border: 1px solid var(--border); border-left: 8px solid var(--primary); border-radius: 18px;
-        background: #ffffff; box-shadow: 0 10px 24px rgba(15, 76, 129, 0.08);
+        display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0;
+        align-items: center;
+        padding: 20px 22px; margin: 16px 0;
+        border: 1px solid var(--border); border-radius: var(--r-lg);
+        background: var(--card); box-shadow: var(--sh-2);
     }
-    .result-label { color: var(--text-sub); font-size: 0.88rem; margin-bottom: 6px; }
-    .result-value { color: var(--text-main); font-size: 1.75rem; font-weight: 900; letter-spacing: -0.02em; }
-    .result-grade { display: inline-flex; align-items: center; justify-content: center; color: white; font-weight: 900; padding: 8px 16px; border-radius: 999px; font-size: 1.05rem; min-width: 88px; }
-    .result-note { color: var(--text-sub); font-size: 0.82rem; margin-top: 6px; }
+    .result-hero > div + div { padding-left: 20px; border-left: 1px solid var(--border); }
+    .result-hero > div { padding-right: 20px; }
+    .result-label { color: var(--text-sub); font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; }
+    .result-value {
+        color: var(--text-main); font-size: 2rem; font-weight: 800;
+        letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums;
+    }
+    .result-unit { font-size: 0.95rem; color: var(--text-sub); font-weight: 700; margin-left: 3px; letter-spacing: 0; }
+    .result-grade {
+        display: inline-flex; align-items: center; justify-content: center;
+        color: #FFFFFF; font-weight: 800; padding: 8px 18px;
+        border-radius: 999px; font-size: 1rem; min-width: 92px;
+    }
+    .result-note { color: var(--text-sub); font-size: 0.82rem; margin-top: 7px; line-height: 1.45; }
 
-    .recommend-card { background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 100%); border: 1px solid #bbf7d0; border-left: 8px solid var(--success); border-radius: 18px; padding: 18px 20px; margin: 12px 0 18px 0; box-shadow: 0 8px 18px rgba(22, 163, 74, 0.08); }
-    .recommend-title { color: #166534; font-weight: 800; font-size: 0.95rem; }
-    .recommend-main { color: #14532d; font-size: 1.9rem; font-weight: 900; margin-top: 4px; }
-    .recommend-sub { color: #475569; font-size: 0.92rem; margin-top: 4px; line-height: 1.5; }
+    /* ===== 추천 카드 ===== */
+    .recommend-card {
+        background: var(--success-050); border: 1px solid var(--success-100);
+        border-radius: var(--r-lg); padding: 18px 20px; margin: 12px 0 16px 0;
+    }
+    .recommend-title { color: #166534; font-weight: 700; font-size: 0.85rem; }
+    .recommend-main { color: #14532D; font-size: 1.8rem; font-weight: 800; margin-top: 6px; letter-spacing: -0.02em; }
+    .recommend-sub { color: #3F5666; font-size: 0.9rem; margin-top: 6px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+
+    /* ===== 인라인 안내문 (st.info 남용 대체) ===== */
+    .hint {
+        display: block; padding: 10px 13px; margin: 6px 0 2px 0;
+        border: 1px solid var(--border); border-radius: var(--r-md);
+        background: var(--bg-soft); color: var(--text-sub);
+        font-size: 0.86rem; line-height: 1.55;
+    }
+    .hint b { color: var(--text-main); font-weight: 700; }
+    .hint.is-accent { background: var(--primary-050); border-color: var(--primary-100); }
+    .hint.is-warn { background: var(--warning-050); border-color: var(--warning-100); color: #7C3D09; }
+    .hint.is-warn b { color: #7C3D09; }
+
+    /* ===== 진행상황(체크포인트) 바 ===== */
+    .cp-label {
+        font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em;
+        color: var(--text-sub); margin: 0 0 8px 2px;
+    }
+    .cp-status {
+        display: inline-flex; align-items: center; gap: 8px;
+        min-height: var(--ctl-h); padding: 0 14px;
+        border: 1px solid transparent; border-radius: var(--r-md);
+        font-size: 0.85rem; font-weight: 600; color: var(--text-sub);
+        line-height: 1.35;
+    }
+    .cp-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); }
+    .cp-status.is-dirty { background: var(--warning-050); border-color: var(--warning-100); color: #7C3D09; }
+    .cp-status.is-dirty .cp-dot { background: var(--warning); }
+    .cp-status.is-saved { background: var(--success-050); border-color: var(--success-100); color: #14532D; }
+    .cp-status.is-saved .cp-dot { background: var(--success); }
 
     div[data-testid="stTable"] { overflow-x: auto; }
+    [data-testid="stAlert"] { border-radius: var(--r-md) !important; }
 
-    /* expander 헤더 정렬 + 모바일 아이콘 텍스트 노출 보정 (기존 유지) */
+    /* ---------------------------------------------------------------------
+       expander — 카드형 + 헤더 정렬
+       기본 토글 아이콘(머티리얼 폰트)은 폰트 로딩 실패 시 'keyboard_arrow_right'
+       라는 글자가 그대로 노출되므로 계속 숨기고, 대신 폰트에 의존하지 않는
+       CSS 셰브론을 직접 그립니다. (기존에는 아이콘만 숨겨 열림/닫힘 단서가 없었음)
+       --------------------------------------------------------------------- */
+    div[data-testid="stExpander"] details {
+        border: 1px solid var(--border) !important; border-radius: var(--r-lg) !important;
+        background: var(--card); box-shadow: var(--sh-1); overflow: hidden;
+    }
     div[data-testid="stExpander"] details > summary {
         list-style: none !important; display: flex !important; align-items: flex-start !important;
-        padding: 10px !important; height: auto !important; min-height: 40px;
-        border: 1px solid rgba(127,127,127,0.15); border-radius: 10px; padding-left: 12px !important;
+        gap: 10px; padding: 13px 16px !important; height: auto !important; min-height: 44px;
+        border: none !important; border-radius: 0 !important;
+        background: var(--bg-soft); cursor: pointer;
     }
+    div[data-testid="stExpander"] details[open] > summary { border-bottom: 1px solid var(--border) !important; }
     div[data-testid="stExpander"] details > summary::-webkit-details-marker { display: none !important; }
     div[data-testid="stExpander"] details > summary > svg { margin-right: 12px !important; margin-top: 3px !important; width: 18px !important; min-width: 18px !important; height: 18px !important; flex-shrink: 0 !important; display: block !important; }
     div[data-testid="stExpander"] details > summary [class*="material"],
     div[data-testid="stExpander"] details > summary [data-testid*="icon"],
     div[data-testid="stExpander"] details > summary [aria-hidden="true"] { display: none !important; }
-    div[data-testid="stExpander"] details > summary p { font-size: 15px; font-weight: 600; margin: 0; line-height: 1.5; white-space: normal !important; word-break: keep-all; }
+    div[data-testid="stExpander"] details > summary p { font-size: 0.95rem; font-weight: 700; margin: 0; line-height: 1.5; white-space: normal !important; word-break: keep-all; color: var(--text-main); }
+    div[data-testid="stExpander"] details > summary::after {
+        content: ""; flex: 0 0 auto; margin-left: auto; margin-top: 5px;
+        width: 8px; height: 8px;
+        border-right: 2px solid var(--text-sub); border-bottom: 2px solid var(--text-sub);
+        transform: rotate(-45deg); transition: transform .18s ease;
+    }
+    div[data-testid="stExpander"] details[open] > summary::after { transform: rotate(45deg); margin-top: 2px; }
 
     @media (max-width: 900px) {
-        .workflow-wrap { display: block; }
-        .workflow-step { margin-bottom: 8px; }
-        .workflow-arrow { text-align: center; padding: 2px 0; }
-        .result-hero { grid-template-columns: 1fr; }
+        .result-hero { grid-template-columns: 1fr; gap: 14px; }
+        .result-hero > div + div { padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--border); }
+        .result-hero > div { padding-right: 0; }
     }
     @media (max-width: 768px) {
         [data-testid="collapsedControl"] { display: none !important; }
         [data-testid="stHeader"] { height: 0 !important; }
         .block-container { padding-top: 0.5rem !important; }
-        div[data-testid="stExpander"] details > summary { padding-left: 10px !important; }
+        div[data-testid="stExpander"] details > summary { padding: 12px 13px !important; }
+        .wf-sub { display: none; }
     }
     @media (max-width: 520px) {
-        .app-hero-title { font-size: 1.35rem; }
-        .result-value { font-size: 1.45rem; }
+        .app-hero { padding: 14px 16px; }
+        .app-hero-title { font-size: 1.1rem; }
+        .app-hero-sub { font-size: 0.82rem; }
+        .result-value { font-size: 1.65rem; }
+        .recommend-main { font-size: 1.5rem; }
+        .wf-title { font-size: 0.76rem; }
+        .wf-num { width: 28px; height: 28px; font-size: 0.78rem; }
+        .wf-step::before { top: 13px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -172,6 +372,16 @@ st.markdown("""
 def _safe_html(value):
     """HTML 렌더링용 문자열 이스케이프"""
     return html.escape(str(value), quote=True)
+
+
+def _safe_filename(value, fallback="프로젝트"):
+    r"""다운로드 파일명에 쓸 수 없는 문자(\ / * ? : " < > |)를 _ 로 치환한다.
+
+    진행상황 저장에만 적용돼 있던 처리를 PDF·엑셀 다운로드에도 동일하게 씁니다.
+    프로젝트명에 'A동/B동'처럼 슬래시가 들어가면 파일명이 깨졌습니다.
+    """
+    name = re.sub(r'[\\/*?:"<>|]', "_", str(value or "").strip())
+    return name or fallback
 
 
 def render_app_header(project_name):
@@ -188,21 +398,36 @@ def render_app_header(project_name):
     )
 
 
-def render_workflow_header(active_index=0):
+def render_workflow_header(current_index=0):
+    """진행 스텝퍼. 완료(체크) / 현재(강조 링) / 예정(회색)을 서로 다르게 표시한다.
+
+    이전에는 '현재 단계까지 전부' 같은 active 스타일이라 마지막 단계에 도달하면
+    5칸이 모두 파랗게 칠해져 지금 어느 단계인지 읽을 수 없었습니다.
+    단계 순서도 실제 화면 순서(보정조건 다음 측정값 입력)에 맞게 바로잡았습니다.
+    """
     steps = [
-        ("1", "프로젝트", "점검 정보 확인"),
-        ("2", "측정값 입력", "Rawdata 확인"),
-        ("3", "보정조건", "방향·재령·Ct"),
-        ("4", "자동 계산", "강도·공식 산정"),
-        ("5", "후속 작업", "통계·보고서"),
+        ("프로젝트", "점검 정보 확인"),
+        ("보정조건", "방향·재령·Ct"),
+        ("측정값 입력", "Rawdata 확인"),
+        ("자동 계산", "강도·공식 산정"),
+        ("후속 작업", "통계·보고서"),
     ]
     parts = []
-    for idx, (num, title, sub) in enumerate(steps):
-        cls = "workflow-step active" if idx <= active_index else "workflow-step"
-        parts.append(f'<div class="{cls}">{num}<br><b>{title}</b><br><small>{sub}</small></div>')
-        if idx != len(steps) - 1:
-            parts.append('<div class="workflow-arrow">\u2192</div>')
-    st.markdown(f'<div class="workflow-wrap">{"".join(parts)}</div>', unsafe_allow_html=True)
+    for idx, (title, sub) in enumerate(steps):
+        if idx < current_index:
+            state, badge = "is-done", "✓"
+        elif idx == current_index:
+            state, badge = "is-current", str(idx + 1)
+        else:
+            state, badge = "is-todo", str(idx + 1)
+        parts.append(
+            f'<div class="wf-step {state}">'
+            f'<div class="wf-num">{badge}</div>'
+            f'<div class="wf-title">{_safe_html(title)}</div>'
+            f'<div class="wf-sub">{_safe_html(sub)}</div>'
+            '</div>'
+        )
+    st.markdown(f'<div class="wf">{"".join(parts)}</div>', unsafe_allow_html=True)
 
 
 def render_step_heading(title, description=""):
@@ -225,12 +450,14 @@ def get_strength_review(mean_strength, design_fck):
         ratio = mean_strength / design_fck * 100 if design_fck > 0 else np.nan
     except Exception:
         ratio = np.nan
+    # 등급 색은 흰 글씨 칩(.result-grade) 배경으로 쓰이므로 흰색 대비 4.5:1 이상인 값만 사용합니다.
+    # (기존 #F59E0B 는 흰 글씨 대비 2.1:1 로 '주의' 배지가 사실상 읽히지 않았습니다)
     if not np.isfinite(ratio):
-        return "검토 필요", "#64748B", "설계강도 기준을 확인하세요.", ratio
+        return "검토 필요", "#546274", "설계강도 기준을 확인하세요.", ratio
     if ratio >= 100:
-        return "양호", "#16A34A", "설계기준강도 이상으로 추정됩니다.", ratio
+        return "양호", "#15803D", "설계기준강도 이상으로 추정됩니다.", ratio
     if ratio >= 85:
-        return "주의", "#F59E0B", "설계강도에 근접하므로 추가 검토가 권장됩니다.", ratio
+        return "주의", "#B45309", "설계강도에 근접하므로 추가 검토가 권장됩니다.", ratio
     return "검토 필요", "#DC2626", "설계강도 대비 낮은 값으로 정밀 검토가 필요합니다.", ratio
 
 # 세션 상태 초기화 (데이터 연동용)
@@ -623,6 +850,18 @@ def parse_readings_text(raw_text):
     return vals
 
 
+def _batch_policy_text(value, default="정확히20"):
+    """엑셀 업로드의 측정정책 셀 정규화.
+
+    빈 셀은 NaN 이라 str() 하면 'nan' 이 되고, 그 값이 정책 파서에 들어가면
+    ValueError 가 나서 해당 행 전체가 '행 처리 실패'로 버려졌습니다.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return default
+    text = str(value).strip()
+    return text or default
+
+
 def _safe_num(v, default, cast=float):
     n = pd.to_numeric(v, errors="coerce")
     if pd.isna(n):
@@ -951,10 +1190,6 @@ def calculate_strength(
     }
 
 
-def convert_df(df):
-    return df.to_csv(index=False).encode('utf-8-sig')
-
-
 def _find_korean_font():
     import os
     candidates = [
@@ -982,7 +1217,7 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                          Table, TableStyle, PageBreak)
+                                          Table, TableStyle)
     except ImportError:
         raise RuntimeError("PDF 생성을 위해 'reportlab' 라이브러리가 필요합니다. (pip install reportlab)")
 
@@ -1071,6 +1306,17 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
 
     doc.build(story)
     return buffer.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def cached_pdf_report(project_name, report_type, summary_dict, detail_df=None, notes=None):
+    """[성능] PDF 생성은 expander 안에 있어도 매 rerun 마다 실행됩니다.
+
+    expander 는 접혀 있어도 본문 코드가 항상 실행되므로, 값을 하나 고칠 때마다
+    reportlab 이 보고서를 통째로 다시 그리고 있었습니다(입력 지연의 주원인).
+    입력이 같으면 기존 결과를 그대로 돌려줍니다.
+    """
+    return generate_pdf_report(project_name, report_type, summary_dict, detail_df, notes)
 
 
 def to_excel(df):
@@ -1494,7 +1740,7 @@ with tab2:
         "🔨 반발경도 정밀 강도 산정",
         "측정값 입력 → 보정조건(타격방향·재령·설계기준강도) → 자동 계산 → 통계·보고서 순으로 진행합니다."
     )
-    render_workflow_header(active_index=(4 if st.session_state.get('last_rebound_result') else 1))
+    render_workflow_header(current_index=(4 if st.session_state.get('last_rebound_result') else 1))
 
     mobile_client = is_mobile_client()
     if mobile_client:
@@ -1553,7 +1799,12 @@ with tab2:
                 key="reb_point_policy_label"
             )
             point_count_policy = normalize_rebound_point_policy(point_policy_label)
-            st.info(f"측정점수 정책: {get_rebound_point_policy_description(point_count_policy)}")
+            # st.info 3개가 연달아 쌓이면 파란 박스만 눈에 들어와 정작 값이 안 읽힙니다.
+            # 조건 설명은 조용한 인라인 힌트로 낮추고, 경고만 st.warning 으로 남깁니다.
+            st.markdown(
+                f'<div class="hint">{_safe_html(get_rebound_point_policy_description(point_count_policy))}</div>',
+                unsafe_allow_html=True,
+            )
 
             # 공식 선택 옵션
             formula_opts = REBOUND_FORMULA_OPTIONS
@@ -1571,7 +1822,11 @@ with tab2:
 
             if formula_mode_label == "설계강도 기준 자동추천":
                 selected_methods = None
-                st.info(f"자동추천 적용 공식: {get_recommended_formula_description(fck)}")
+                st.markdown(
+                    '<div class="hint is-accent"><b>자동추천 적용 공식</b> · '
+                    f'{_safe_html(get_recommended_formula_description(fck))}</div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 selected_methods = st.multiselect(
                     "평균 산정 적용 공식",
@@ -1581,7 +1836,11 @@ with tab2:
                     key="reb_selected_methods"
                 )
                 if selected_methods:
-                    st.info(f"수동 선택 적용 공식: {', '.join(selected_methods)}")
+                    st.markdown(
+                        '<div class="hint is-accent"><b>수동 선택 적용 공식</b> · '
+                        f'{_safe_html(", ".join(selected_methods))}</div>',
+                        unsafe_allow_html=True,
+                    )
                 else:
                     st.warning("직접 선택 모드에서는 평균 산정에 사용할 공식을 1개 이상 선택하세요.")
 
@@ -1810,17 +2069,18 @@ with tab2:
                 <div class="result-hero">
                   <div>
                     <div class="result-label">평균 추정 압축강도 (코어보정 반영)</div>
-                    <div class="result-value" style="color:{grade_color};">{mean_s:.2f} <span style="font-size:1rem;color:var(--text-sub);font-weight:700;">MPa</span></div>
+                    <div class="result-value" style="color:{grade_color};">{mean_s:.2f}<span class="result-unit">MPa</span></div>
                     <div class="result-note">{_safe_html(grade_msg)}</div>
                   </div>
                   <div>
                     <div class="result-label">설계강도 대비</div>
-                    <div class="result-value">{ratio:.0f}<span style="font-size:1rem;color:var(--text-sub);font-weight:700;">%</span></div>
-                    <div class="result-note">설계 {result_fck:.0f} MPa</div>
+                    <div class="result-value">{ratio:.0f}<span class="result-unit">%</span></div>
+                    <div class="result-note">설계기준강도 {result_fck:.0f} MPa</div>
                   </div>
-                  <div style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:8px;">
+                  <div>
                     <div class="result-label">참고 검토등급</div>
                     <span class="result-grade" style="background:{grade_color};">{_safe_html(grade)}</span>
+                    <div class="result-note">최종 판정은 책임기술자 검토 대상</div>
                   </div>
                 </div>
                 """,
@@ -1878,7 +2138,7 @@ with tab2:
                 x=alt.X('강도:Q', title='추정강도 (MPa)'),
             )
             bars = base_chart.mark_bar(cornerRadiusEnd=3, height=24).encode(
-                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#16A34A'), alt.value('#DC2626')),
+                color=alt.condition(alt.datum.강도 >= result_fck, alt.value('#15803D'), alt.value('#DC2626')),
                 tooltip=[alt.Tooltip('공식:N'), alt.Tooltip('강도:Q', format='.2f', title='강도(MPa)')]
             )
             value_labels = base_chart.mark_text(align='left', baseline='middle', dx=5, fontWeight='bold').encode(
@@ -1914,7 +2174,7 @@ with tab2:
                     "강도비(%)": [f"{(v/result_fck*100):.1f}" if result_fck else "-" for v in res["Formulas"].values()],
                 })
                 try:
-                    pdf_bytes = generate_pdf_report(
+                    pdf_bytes = cached_pdf_report(
                         project_name=p_name,
                         report_type="반발경도",
                         summary_dict=summary,
@@ -1927,7 +2187,7 @@ with tab2:
                     st.download_button(
                         "📥 PDF 다운로드",
                         data=pdf_bytes,
-                        file_name=f"{p_name}_반발경도_보고서.pdf",
+                        file_name=f"{_safe_filename(p_name)}_반발경도_보고서.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
@@ -1959,7 +2219,8 @@ with tab2:
                 label="📥 입력 양식(엑셀) 다운로드",
                 data=template_excel,
                 file_name='반발경도_입력양식_측정정책_Ct포함.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                use_container_width=True
             )
         except RuntimeError as e:
             st.error(str(e))
@@ -1980,14 +2241,19 @@ with tab2:
 
                 for idx, row in df_up.iterrows():
                     try:
+                        # row.get 은 셀이 비어 있어도 기본값 대신 NaN 을 돌려주므로
+                        # 지점명이 'nan' 으로 표시되는 문제를 막기 위해 따로 걸러냅니다.
+                        _point_name = row.get("지점")
+                        if pd.isna(_point_name) or str(_point_name).strip() == "":
+                            _point_name = f"P{idx + 1}"
                         init_data.append({
                             "선택": True,
-                            "지점": row.get("지점", f"P{idx+1}"),
+                            "지점": str(_point_name).strip(),
                             "각도": _safe_num(row.get("각도", 0), 0, int),
                             "재령": _safe_num(row.get("재령", 3000), 3000, int),
                             "설계": _safe_num(row.get("설계", 24.0), 24.0, float),
                             "Ct": _safe_num(row.get("Ct", 1.0), 1.0, float),
-                            "측정정책": str(row.get("측정정책", "정확히20")),
+                            "측정정책": _batch_policy_text(row.get("측정정책")),
                             "데이터": str(row.get("데이터", ""))
                         })
                     except Exception as row_err:
@@ -2119,7 +2385,7 @@ with tab2:
                         st.download_button(
                             label="📊 엑셀 다운로드",
                             data=excel_data,
-                            file_name=f"{p_name}_반발경도_평가결과_측정정책_Ct포함.xlsx",
+                            file_name=f"{_safe_filename(p_name)}_반발경도_평가결과_측정정책_Ct포함.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             type="primary",
                             use_container_width=True
@@ -2139,7 +2405,7 @@ with tab2:
                             }
                         else:
                             summary_b = {"프로젝트명": p_name, "평가 지점 수": len(final_df)}
-                        pdf_bytes = generate_pdf_report(
+                        pdf_bytes = cached_pdf_report(
                             project_name=p_name,
                             report_type="반발경도(다중지점)",
                             summary_dict=summary_b,
@@ -2149,7 +2415,7 @@ with tab2:
                         st.download_button(
                             label="📄 PDF 다운로드",
                             data=pdf_bytes,
-                            file_name=f"{p_name}_반발경도_보고서.pdf",
+                            file_name=f"{_safe_filename(p_name)}_반발경도_보고서.pdf",
                             mime="application/pdf",
                             use_container_width=True
                         )
@@ -2252,8 +2518,8 @@ with tab4:
                     y=alt.Y("변동계수CV(%):Q"),
                     color=alt.condition(
                         alt.datum["공식"] == best["공식"],
-                        alt.value("#16A34A"),
-                        alt.value("#64748B")
+                        alt.value("#15803D"),
+                        alt.value("#546274")
                     )
                 ).properties(height=280, title="공식별 변동계수 비교 (낮을수록 안정적)")
                 st.altair_chart(cv_chart, use_container_width=True)
@@ -2282,14 +2548,14 @@ with tab4:
                         "강도비(설계 대비)": f"{best['강도비(%)']:.1f} %",
                     }
                     try:
-                        pdf_bytes = generate_pdf_report(
+                        pdf_bytes = cached_pdf_report(
                             project_name=p_name, report_type="통계·비교",
                             summary_dict=summary_st, detail_df=stats_df,
                             notes="변동계수(CV) 최저 공식이 해당 시설물 콘크리트 특성에 가장 안정적이며, "
                                   "설계강도 기준 권장 공식군과의 일치 여부를 함께 검토하여 채택하시기 바랍니다."
                         )
                         st.download_button("📥 PDF 다운로드", data=pdf_bytes,
-                                          file_name=f"{p_name}_통계비교_보고서.pdf",
+                                          file_name=f"{_safe_filename(p_name)}_통계비교_보고서.pdf",
                                           mime="application/pdf", use_container_width=True)
                     except RuntimeError as e:
                         st.warning(str(e))
@@ -2341,7 +2607,7 @@ with tab4:
 
             chart = alt.Chart(pd.DataFrame({"번호": range(1, len(data) + 1), "강도": data})).mark_bar().encode(
                 x='번호:O', y='강도:Q',
-                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#16A34A'), alt.value('#DC2626'))
+                color=alt.condition(alt.datum.강도 >= st_fck, alt.value('#15803D'), alt.value('#DC2626'))
             )
             rule = alt.Chart(pd.DataFrame({'y': [st_fck]})).mark_rule(color='#DC2626', strokeDash=[5, 3], size=2).encode(y='y')
             st.altair_chart(chart + rule, use_container_width=True)
@@ -2349,14 +2615,18 @@ with tab4:
             st.warning("최소 2개 이상의 숫자가 필요합니다.")
 
 with checkpoint_panel:
-    cp_col1, cp_col2, cp_col3 = st.columns([1, 1, 2])
+    # [레이아웃 통일] 예전에는 [저장]이 버튼, [불러오기]가 파일 드롭존이라
+    # 두 요소의 높이·모양·정렬이 전혀 달랐습니다.
+    # 드롭존을 팝오버 안으로 넣어 바깥에는 같은 규격의 버튼 2개만 남깁니다.
+    st.markdown('<div class="cp-label">진행상황</div>', unsafe_allow_html=True)
+    cp_col1, cp_col2, cp_col3 = st.columns([1, 1, 2], vertical_alignment="center")
 
     _current_payload = build_checkpoint_payload(st.session_state)
     _current_hash = _checkpoint_state_hash(_current_payload)
 
     with cp_col1:
         _checkpoint_json = json.dumps(_current_payload, ensure_ascii=False, indent=2)
-        _safe_proj_name = re.sub(r'[\\/*?:"<>|]', "_", st.session_state.get("proj_name", "") or "프로젝트")
+        _safe_proj_name = _safe_filename(st.session_state.get("proj_name", ""))
         _checkpoint_filename = f"{_safe_proj_name}_진행상황_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
         if st.download_button(
             "💾 진행상황 저장",
@@ -2364,22 +2634,37 @@ with checkpoint_panel:
             file_name=_checkpoint_filename,
             mime="application/json",
             use_container_width=True,
+            help="현재 입력값과 누적 지점을 JSON 파일 하나로 내려받습니다.",
         ):
             st.session_state["_checkpoint_saved_hash"] = _current_hash
 
     with cp_col2:
-        _checkpoint_file = st.file_uploader(
-            "📂 불러오기", type=["json"], key="checkpoint_uploader"
-        )
+        with st.popover("📂 진행상황 불러오기", use_container_width=True):
+            st.caption("저장해 둔 진행상황 파일(.json)을 선택하세요.")
+            _checkpoint_file = st.file_uploader(
+                "진행상황 파일",
+                type=["json"],
+                key="checkpoint_uploader",
+                label_visibility="collapsed",
+            )
 
     with cp_col3:
         _saved_hash = st.session_state.get("_checkpoint_saved_hash")
         _has_data = bool(st.session_state.get("rebound_records"))
-        if _saved_hash is None:
-            if _has_data:
-                st.caption("이번 세션에서 아직 저장하지 않았습니다.")
-        elif _current_hash != _saved_hash:
-            st.caption("⚠ 마지막 저장 이후 변경사항이 있습니다.")
+        if _saved_hash is None and _has_data:
+            _cp_status_cls, _cp_status_txt = "is-dirty", "이번 세션에서 아직 저장하지 않았습니다"
+        elif _saved_hash is not None and _current_hash != _saved_hash:
+            _cp_status_cls, _cp_status_txt = "is-dirty", "마지막 저장 이후 변경사항이 있습니다"
+        elif _saved_hash is not None:
+            _cp_status_cls, _cp_status_txt = "is-saved", "마지막 저장 시점과 동일합니다"
+        else:
+            _cp_status_cls, _cp_status_txt = "", ""
+        if _cp_status_txt:
+            st.markdown(
+                f'<div class="cp-status {_cp_status_cls}"><span class="cp-dot"></span>'
+                f'{_safe_html(_cp_status_txt)}</div>',
+                unsafe_allow_html=True,
+            )
 
 if _checkpoint_file is not None:
     _upload_sig = (_checkpoint_file.name, _checkpoint_file.size)
