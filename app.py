@@ -110,8 +110,12 @@ st.markdown("""
         --warn: #B45309;
     }
 
+    /* Streamlit 헤더(높이 3.75rem)는 본문 위에 떠 있고, 사이드바가 접혀 있으면
+       그 왼쪽에 '사이드바 열기(»)' 버튼이 놓입니다.
+       상단 여백이 1rem 밖에 없어 이 버튼이 첫 카드(앱 헤더 = CI + 프로그램명)를
+       덮고 있었습니다. 헤더 높이만큼 확보해 겹침을 없앱니다. */
     .block-container {
-        padding-top: 1rem !important;
+        padding-top: 3.75rem !important;
         padding-bottom: 5rem !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
@@ -119,6 +123,8 @@ st.markdown("""
         background: transparent !important;
     }
     [data-testid="stAppViewContainer"] { background: var(--bg-soft); }
+    /* 헤더는 투명이라 배경이 그대로 비칩니다. 버튼만 눈에 띄게 다듬습니다. */
+    [data-testid="stExpandSidebarButton"] svg { color: var(--primary) !important; }
 
     /* ---------------------------------------------------------------------
        탭 — 세그먼트 컨트롤
@@ -395,9 +401,12 @@ st.markdown("""
         .result-hero > div { padding-right: 0; }
     }
     @media (max-width: 768px) {
-        [data-testid="collapsedControl"] { display: none !important; }
-        [data-testid="stHeader"] { height: 0 !important; }
-        .block-container { padding-top: 0.5rem !important; }
+        /* 이전에는 헤더를 height:0 으로 눌러 세로 공간을 아꼈지만, 그러면 헤더 안에 있는
+           '사이드바 열기' 버튼까지 함께 뭉개져 모바일에서 프로젝트명을 입력할 방법이
+           사라집니다. 헤더는 그대로 두고 여백만 데스크톱보다 조금 줄입니다.
+           (구버전 선택자 collapsedControl 은 1.60 에서 stExpandSidebarButton 으로
+            바뀌어 더 이상 걸리지 않으므로 제거했습니다) */
+        .block-container { padding-top: 3.25rem !important; }
         div[data-testid="stExpander"] details > summary { padding: 12px 13px !important; }
         .wf-sub { display: none; }
     }
