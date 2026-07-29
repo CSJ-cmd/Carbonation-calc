@@ -22,7 +22,36 @@ logger = logging.getLogger(__name__)
 #    · 파일이 없으면 로고 없이 그대로 동작합니다.
 # =========================================================
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CI_LOGO_PATH = os.path.join(APP_DIR, "서울시설공단_국문CI_PNG.png")
+
+# 우선 확인할 파일명. 위에 있는 것부터 찾습니다.
+CI_LOGO_CANDIDATES = (
+    "ci_logo.png",                  # ASCII 이름을 쓰고 싶을 때(선택)
+    "서울시설공단_국문CI_PNG.png",     # 현재 원본 파일명
+)
+
+
+def _resolve_ci_logo_path():
+    """CI 이미지의 실제 경로를 찾는다. 없으면 None.
+
+    한글 파일명은 OS·업로드 경로에 따라 유니코드 정규화(NFC/NFD)가 달라질 수 있어,
+    Windows 에서 만든 이름과 Linux 배포본의 이름이 눈에는 같아 보여도
+    바이트가 달라 open() 이 실패할 수 있습니다.
+    그래서 이름을 정확히 맞추지 못해도 폴더에서 CI PNG 를 찾아냅니다.
+    """
+    for name in CI_LOGO_CANDIDATES:
+        path = os.path.join(APP_DIR, name)
+        if os.path.isfile(path):
+            return path
+    try:
+        for filename in sorted(os.listdir(APP_DIR)):
+            if filename.lower().endswith(".png") and "ci" in filename.lower():
+                return os.path.join(APP_DIR, filename)
+    except OSError as e:
+        logger.warning("CI 로고 탐색 실패(%s): %s", APP_DIR, e)
+    return None
+
+
+CI_LOGO_PATH = _resolve_ci_logo_path()
 
 # CI 지정색. 파랑은 흰 배경 대비 3.8:1 이라 본문 텍스트·버튼 배경에는 쓸 수 없고
 # (WCAG AA 4.5:1 미달) 구분선·로고 같은 비텍스트 요소에만 사용합니다.
@@ -416,6 +445,8 @@ def load_ci_logo_data_uri(path=CI_LOGO_PATH):
     base64 로 인라인해야 합니다. 파일이 없으면 None 을 돌려주고,
     호출부는 로고 없이 정상 렌더링합니다.
     """
+    if not path:
+        return None
     try:
         with open(path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode("ascii")
@@ -1306,7 +1337,7 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
 
     # 기관 CI — 보고서 좌측 상단. 정밀안전점검 보고서 부록으로 편철되므로
     # 발행 주체가 드러나야 합니다. 파일이 없거나 읽기에 실패하면 로고 없이 진행합니다.
-    if os.path.exists(CI_LOGO_PATH):
+    if CI_LOGO_PATH and os.path.isfile(CI_LOGO_PATH):
         try:
             logo_w_px, logo_h_px = ImageReader(CI_LOGO_PATH).getSize()
             logo_h = 11 * mm
