@@ -230,6 +230,16 @@ st.markdown("""
         color: var(--primary) !important;
     }
 
+    /* 단일행 입력칸을 버튼과 같은 높이(--ctl-h)로 맞춥니다.
+       입력칸에는 라벨이 붙고 버튼에는 없어서, 나란히 놓으면 세로로 어긋나 보였습니다.
+       높이를 통일하고 열 정렬을 bottom 으로 주면 아래 선이 정확히 맞습니다. */
+    .stTextInput [data-baseweb="input"],
+    .stTextInput [data-testid="stTextInputRootElement"] {
+        min-height: var(--ctl-h) !important;
+        border-radius: var(--r-md) !important;
+    }
+    .stTextInput input { min-height: calc(var(--ctl-h) - 2px) !important; }
+
     /* 키보드 포커스 링 (마우스 클릭 시에는 나타나지 않음) */
     button:focus-visible,
     [role="tab"]:focus-visible,
@@ -2214,9 +2224,15 @@ with tab2:
                 r5.metric("재령 계수 α", f"{res['Age_Coeff']:.2f}")
                 r6.metric("Ct", f"{res['Core_Coeff']:.2f}")
 
-            add_col1, add_col2 = st.columns(2)
+            # 지점명 입력칸에는 라벨이 있고 버튼에는 없어 기본(top) 정렬에서는
+            # 버튼이 라벨 높이만큼 위로 뜹니다. bottom 정렬로 아래 선을 맞춥니다.
+            add_col1, add_col2 = st.columns([1, 1.4], vertical_alignment="bottom")
             with add_col1:
-                st.text_input("지점명", key="add_point_name")
+                st.text_input(
+                    "지점명",
+                    key="add_point_name",
+                    help="통계·비교 탭에서 지점을 구분할 이름입니다. 비우면 자동 번호가 붙습니다."
+                )
             with add_col2:
                 st.button(
                     "➕ 통계 분석 목록에 추가",
