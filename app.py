@@ -3,6 +3,8 @@ import math
 import pandas as pd
 import numpy as np
 import io
+import os
+import base64
 import altair as alt
 import re
 import logging
@@ -12,6 +14,21 @@ import json
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
+
+# =========================================================
+# 0. 기관 CI (서울시설공단)
+#    · 경로는 실행 위치가 아니라 이 파일 기준으로 잡습니다.
+#      (streamlit run 을 다른 폴더에서 실행해도 로고가 깨지지 않도록)
+#    · 파일이 없으면 로고 없이 그대로 동작합니다.
+# =========================================================
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CI_LOGO_PATH = os.path.join(APP_DIR, "서울시설공단_국문CI_PNG.png")
+
+# CI 지정색. 파랑은 흰 배경 대비 3.8:1 이라 본문 텍스트·버튼 배경에는 쓸 수 없고
+# (WCAG AA 4.5:1 미달) 구분선·로고 같은 비텍스트 요소에만 사용합니다.
+# 화면의 조작 요소 색은 기존 --primary(#0F4C81) 를 그대로 유지합니다.
+CI_BLUE = "#0089D0"
+CI_GRAY = "#69737A"
 
 # =========================================================
 # 1. 페이지 기본 설정 및 스타일 (재설계)
@@ -200,10 +217,16 @@ st.markdown("""
        기존의 8px 파란 좌측 바 + 그라데이션을 걷어내고 1px 테두리 카드로 정리했습니다.
        (굵은 색 좌측 바는 화면 곳곳에서 반복돼 '투박함'의 주된 원인이었습니다) */
     .app-hero {
+        display: flex; align-items: center; gap: 18px;
         padding: 16px 20px; margin: 0 0 14px 0;
         border: 1px solid var(--border); border-radius: var(--r-lg);
         background: var(--card); box-shadow: var(--sh-1);
     }
+    /* 기관 CI — 원본 비율(1.925:1) 유지, 높이만 고정.
+       로고는 배경 위에 얹지 않고 흰 카드 위에 그대로 둡니다(지정색 보존). */
+    .app-hero-ci { flex: 0 0 auto; height: 38px; width: auto; display: block; }
+    .app-hero-rule { flex: 0 0 auto; align-self: stretch; width: 1px; background: var(--border); margin: 3px 0; }
+    .app-hero-text { min-width: 0; }
     .app-hero-title { font-size: 1.3rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.02em; line-height: 1.3; }
     .app-hero-sub { font-size: 0.88rem; color: var(--text-sub); line-height: 1.5; margin-top: 4px; }
 
@@ -350,7 +373,8 @@ st.markdown("""
         .wf-sub { display: none; }
     }
     @media (max-width: 520px) {
-        .app-hero { padding: 14px 16px; }
+        .app-hero { padding: 14px 16px; gap: 12px; }
+        .app-hero-ci { height: 28px; }
         .app-hero-title { font-size: 1.1rem; }
         .app-hero-sub { font-size: 0.82rem; }
         .result-value { font-size: 1.65rem; }
@@ -384,13 +408,42 @@ def _safe_filename(value, fallback="프로젝트"):
     return name or fallback
 
 
+@st.cache_data(show_spinner=False)
+def load_ci_logo_data_uri(path=CI_LOGO_PATH):
+    """공단 CI 를 data URI 로 읽어 캐시한다.
+
+    Streamlit 은 <img src="로컬경로"> 를 서빙하지 않으므로 HTML 안에 넣으려면
+    base64 로 인라인해야 합니다. 파일이 없으면 None 을 돌려주고,
+    호출부는 로고 없이 정상 렌더링합니다.
+    """
+    try:
+        with open(path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("ascii")
+    except OSError as e:
+        logger.warning("CI 로고를 읽지 못했습니다(%s): %s", path, e)
+        return None
+    return f"data:image/png;base64,{encoded}"
+
+
 def render_app_header(project_name):
+    ci_uri = load_ci_logo_data_uri()
+    if ci_uri:
+        brand = (
+            f'<img class="app-hero-ci" src="{ci_uri}" alt="서울시설공단" />'
+            '<div class="app-hero-rule"></div>'
+        )
+    else:
+        brand = ""
     st.markdown(
         f"""
         <div class="app-hero">
-            <div class="app-hero-title">\U0001F3D7\uFE0F 구조물 안전진단 통합 평가 Pro</div>
-            <div class="app-hero-sub">
-                프로젝트: <b>{_safe_html(project_name)}</b> · 반발경도 입력, 보정계산, 통계 비교, PDF/Excel 출력까지 한 화면에서 처리합니다.
+            {brand}
+            <div class="app-hero-text">
+                <div class="app-hero-title">구조물 안전진단 통합 평가 Pro</div>
+                <div class="app-hero-sub">
+                    프로젝트: <b>{_safe_html(project_name)}</b> ·
+                    반발경도 입력, 보정계산, 통계 비교, PDF/Excel 출력까지 한 화면에서 처리합니다.
+                </div>
             </div>
         </div>
         """,
@@ -1191,7 +1244,6 @@ def calculate_strength(
 
 
 def _find_korean_font():
-    import os
     candidates = [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
@@ -1214,10 +1266,12 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
+        from reportlab.lib.utils import ImageReader
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                          Table, TableStyle)
+                                          Table, TableStyle, Image as RLImage,
+                                          HRFlowable)
     except ImportError:
         raise RuntimeError("PDF 생성을 위해 'reportlab' 라이브러리가 필요합니다. (pip install reportlab)")
 
@@ -1248,6 +1302,23 @@ def generate_pdf_report(project_name, report_type, summary_dict, detail_df=None,
                            fontName=font_name, fontSize=9, leading=13)
 
     story = []
+
+    # 기관 CI — 보고서 좌측 상단. 정밀안전점검 보고서 부록으로 편철되므로
+    # 발행 주체가 드러나야 합니다. 파일이 없거나 읽기에 실패하면 로고 없이 진행합니다.
+    if os.path.exists(CI_LOGO_PATH):
+        try:
+            logo_w_px, logo_h_px = ImageReader(CI_LOGO_PATH).getSize()
+            logo_h = 11 * mm
+            logo_w = logo_h * (logo_w_px / logo_h_px)
+            story.append(RLImage(CI_LOGO_PATH, width=logo_w, height=logo_h,
+                                 hAlign='LEFT', mask='auto'))
+            story.append(Spacer(1, 3*mm))
+        except Exception as e:
+            logger.warning("PDF CI 로고 삽입 실패: %s", e)
+    story.append(HRFlowable(width="100%", thickness=1.2,
+                            color=colors.HexColor(CI_BLUE),
+                            spaceBefore=0, spaceAfter=6))
+
     story.append(Paragraph(_safe_html(project_name), title_style))
     story.append(Paragraph(f"비파괴검사 결과 보고서 ({report_type})", h2))
     story.append(Paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}", body))
