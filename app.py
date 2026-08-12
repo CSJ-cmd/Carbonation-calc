@@ -124,7 +124,9 @@ st.markdown("""
     }
     [data-testid="stAppViewContainer"] { background: var(--bg-soft); }
     /* 헤더는 투명이라 배경이 그대로 비칩니다. 버튼만 눈에 띄게 다듬습니다. */
-    [data-testid="stExpandSidebarButton"] svg { color: var(--primary) !important; }
+    /* 사이드바 버튼 화살표는 아래 "화살표를 폰트 없이 CSS 로 직접 그립니다"
+       절에서 색상까지 함께 지정합니다. (화살표는 <svg> 가 아니라 span 이라
+       기존 규칙은 무효였습니다.) */
 
     /* ---------------------------------------------------------------------
        탭 — 세그먼트 컨트롤
@@ -392,10 +394,81 @@ st.markdown("""
     }
     div[data-testid="stExpander"] details[open] > summary { border-bottom: 1px solid var(--border) !important; }
     div[data-testid="stExpander"] details > summary::-webkit-details-marker { display: none !important; }
-    div[data-testid="stExpander"] details > summary > svg { margin-right: 12px !important; margin-top: 3px !important; width: 18px !important; min-width: 18px !important; height: 18px !important; flex-shrink: 0 !important; display: block !important; }
-    div[data-testid="stExpander"] details > summary [class*="material"],
-    div[data-testid="stExpander"] details > summary [data-testid*="icon"],
-    div[data-testid="stExpander"] details > summary [aria-hidden="true"] { display: none !important; }
+    /* ── 화살표를 폰트 없이 CSS 로 직접 그립니다 ─────────────────────────
+       Streamlit 은 모든 아이콘을 Material Symbols 리거처 "텍스트"로 그립니다:
+         <span data-testid="stIconMaterial">keyboard_arrow_right</span>
+       그런데 일부 모바일 브라우저(시스템 글꼴을 강제하는 경우 등)는 웹폰트를
+       무시합니다. 그러면 리거처가 걸리지 않아 저 단어가 글자로 그대로 노출돼
+       잘리거나 옆 글자와 겹칩니다.
+       실측 결과 Streamlit 번들 폰트도, base64 로 인라인한 폰트도 똑같이
+       무시됐고 CSS 로 그린 도형만 정상 표시됐습니다. 그래서 폰트에 기대지
+       않고 화살표를 테두리로 직접 그립니다.
+       (기존의 `> svg`, [class*="material"], [data-testid*="icon"],
+        [aria-hidden="true"] 셀렉터는 현재 DOM 과 매칭되지 않아 무효였습니다.) */
+
+    /* 화살표 외 아이콘은 그대로 두되, 글자가 넘쳐 겹치는 것만 막습니다.
+       알림(st.info/error 등)·expander 상태 아이콘은 testid 가 달라 함께 지정합니다. */
+    span[data-testid="stIconMaterial"],
+    span[data-testid="stAlertDynamicIcon"],
+    span[data-testid="stExpanderIconCheck"],
+    span[data-testid="stExpanderIconError"] { overflow: hidden !important; }
+
+    /* 아래 네 곳은 리거처 글자를 지우고(font-size:0) 화살표를 직접 그립니다.
+       그릴 도형이 상자 밖으로 조금 넘치므로 위의 넘침 제한을 반드시 풀어야
+       합니다. (풀지 않으면 회전한 도형의 끝이 잘립니다 — 열림 상태의 아래쪽
+       화살표가 짤려 보이던 원인)
+       summary 안의 래퍼 태그는 Streamlit 1.59 <div> → 1.60 <span> 으로 바뀐
+       전례가 있어, 자식(>)이 아니라 자손 셀렉터로 깊이에 의존하지 않게 잡습니다. */
+    div[data-testid="stExpander"] details > summary span[data-testid="stIconMaterial"],
+    [data-testid="stPopoverButton"] span[data-testid="stIconMaterial"],
+    [data-testid="stExpandSidebarButton"] span[data-testid="stIconMaterial"],
+    [data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"] {
+        font-size: 0 !important;
+        overflow: visible !important;
+        position: relative;
+        flex-shrink: 0 !important;
+    }
+    div[data-testid="stExpander"] details > summary span[data-testid="stIconMaterial"]::before,
+    [data-testid="stPopoverButton"] span[data-testid="stIconMaterial"]::before,
+    [data-testid="stExpandSidebarButton"] span[data-testid="stIconMaterial"]::before,
+    [data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"]::before {
+        content: "";
+        position: absolute; inset: 0; margin: auto;   /* 상자 정중앙 배치 */
+        width: 7px; height: 7px;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+    }
+
+    /* 방향 — expander : 닫힘 ▸ / 열림 ▾ */
+    div[data-testid="stExpander"] details > summary span[data-testid="stIconMaterial"] {
+        margin-right: 12px !important;
+    }
+    div[data-testid="stExpander"] details > summary span[data-testid="stIconMaterial"]::before {
+        transform: translateX(-15%) rotate(-45deg);
+    }
+    div[data-testid="stExpander"] details[open] > summary span[data-testid="stIconMaterial"]::before {
+        transform: translateY(-15%) rotate(45deg);
+    }
+
+    /* 방향 — 팝오버(진행상황 불러오기) : 닫힘 ▾ / 열림 ▴ */
+    [data-testid="stPopoverButton"] span[data-testid="stIconMaterial"]::before {
+        transform: translateY(-15%) rotate(45deg);
+    }
+    [data-testid="stPopoverButton"][aria-expanded="true"] span[data-testid="stIconMaterial"]::before {
+        transform: translateY(15%) rotate(-135deg);
+    }
+
+    /* 방향 — 사이드바 열기 » / 닫기 « */
+    [data-testid="stExpandSidebarButton"] span[data-testid="stIconMaterial"],
+    [data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"] {
+        color: var(--primary) !important;
+    }
+    [data-testid="stExpandSidebarButton"] span[data-testid="stIconMaterial"]::before {
+        transform: translateX(-15%) rotate(-45deg);
+    }
+    [data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"]::before {
+        transform: translateX(15%) rotate(135deg);
+    }
     div[data-testid="stExpander"] details > summary p { font-size: 0.95rem; font-weight: 700; margin: 0; line-height: 1.5; white-space: normal !important; word-break: keep-all; color: var(--text-main); }
     div[data-testid="stExpander"] details > summary::after {
         content: ""; flex: 0 0 auto; margin-left: auto; margin-top: 5px;
