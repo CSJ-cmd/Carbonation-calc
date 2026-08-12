@@ -1,0 +1,29 @@
+# 배포 환경이 로컬과 같아지도록 실제 설치·검증된 버전으로 고정합니다.
+# (이전 파일은 streamlit 1.42.2 로 고정돼 있었으나 로컬은 1.60.0 이었고,
+#  pandas·numpy·altair·opencv 는 메이저 버전까지 어긋나 있었습니다.
+#  1.5x 에서 탭 DOM 이 BaseWeb -> react-aria 로 바뀐 것처럼, 버전이 어긋나면
+#  로컬에서 멀쩡하던 화면이 배포본에서 깨집니다.)
+# 검증 환경: Python 3.13.14
+
+streamlit==1.60.0
+pandas==3.0.5
+numpy==2.5.1
+altair==6.2.2
+
+# 엑셀 입출력 — to_excel() 은 xlsxwriter, 실패 시 openpyxl 순으로 시도합니다.
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+
+# PDF 보고서 — 없으면 모든 [PDF 다운로드] 버튼이 실패합니다.
+# 기존 requirements.txt 에 빠져 있어 배포본에서 PDF 기능이 동작하지 않았습니다.
+reportlab==5.0.0
+
+# reportlab(>=9.0.0 요구)과 streamlit 이 함께 쓰는 이미지 라이브러리.
+# 앱 코드가 직접 import 하지는 않지만, CI 로고 렌더링 결과가 버전에 따라
+# 달라지지 않도록 명시적으로 고정합니다.
+Pillow==12.3.0
+
+# [제거] opencv-python-headless / easyocr
+# OCR(촬영 → 숫자 자동인식) 기능을 삭제하면서 함께 제거했습니다.
+# easyocr 은 torch 를 끌어와 설치 용량이 2GB 를 넘어 Streamlit Community Cloud
+# 무료 티어에서 배포가 어렵고, 실제로 설치된 적이 없어 동작하지 않는 기능이었습니다.
