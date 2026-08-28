@@ -875,9 +875,9 @@ REBOUND_DISCARD_RATIO_LIMIT = 0.20
 
 REBOUND_POINT_POLICY_OPTIONS = {
     REBOUND_POINT_POLICY_EXACT_20: {
-        "label": "정확히 20개",
-        "short_label": "정확히20",
-        "description": "1개소당 측정값을 정확히 20개로 제한합니다. 기각값이 4개 이상이면 시험 무효입니다.",
+        "label": "20개",
+        "short_label": "20",
+        "description": "1개소당 측정값을 20개로 제한합니다. 기각값이 4개 이상이면 시험 무효입니다.",
     },
     REBOUND_POINT_POLICY_MIN_20: {
         "label": "20개 이상 허용",
@@ -1257,7 +1257,7 @@ def calculate_strength(
     if point_policy == REBOUND_POINT_POLICY_EXACT_20 and n != 20:
         return False, (
             f"시험 무효: 측정점수 {n}개 입력됨. "
-            "현재 정책은 '정확히 20개'이므로 1개소당 측정값을 정확히 20개로 입력하세요."
+            "현재 정책은 '20개'이므로 1개소당 측정값을 정확히 20개로 입력하세요."
         )
 
     if point_policy == REBOUND_POINT_POLICY_MIN_20 and n < 20:
@@ -1951,7 +1951,7 @@ with tab2:
                 angle = st.selectbox(
                     "타격 방향",
                     [90, 45, 0, -45, -90],
-                    format_func=lambda x: {90: "+90°(상향수직)", 45: "+45°(상향경사)", 0: "0°(수평)", -45: "-45°(하향경사)", -90: "-90°(하향수직)"}[x],
+                    format_func=lambda x: {90: "+90°(상향수직-바닥판 하면)", 45: "+45°(상향경사)", 0: "0°(수평-벽체)", -45: "-45°(하향경사)", -90: "-90°(하향수직-바닥판 상면)"}[x],
                     key="reb_angle"
                 )
                 days = st.number_input("재령(일)", 1, 10000, 3000,
