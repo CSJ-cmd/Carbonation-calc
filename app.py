@@ -1,5 +1,3 @@
-import streamlit as st
-import math
 import pandas as pd
 import numpy as np
 import io
@@ -665,12 +663,20 @@ if 'add_point_name' not in st.session_state:
 
 def _make_rebound_record(point_name, res):
     """통계·비교 탭에 누적할 반발경도 결과 1건 생성"""
+    # 설계강도·산정방식·적용공식을 함께 저장합니다.
+    # 통계 탭이 지점을 저강도/고강도로 나누고 지점별 설계강도로 강도비를 구하는 근거입니다.
     rec = {
         "지점": str(point_name).strip() or f"P{len(st.session_state['rebound_records']) + 1}",
+        "설계": round(float(res.get("Design_Fck", np.nan)), 1),
+        "산정방식": str(res.get("Formula_Mode", "자동추천")),
+        "적용공식": ", ".join(res.get("Applied_Formulas", []) or []),
         "평균": round(float(res["Mean_Strength"]), 2),
     }
     for k, v in res.get("Formulas", {}).items():
         rec[k] = round(float(v), 2)
+    rec["설계입력"] = DESIGN_FCK_ASSUMED_LABEL if res.get("Design_Fck_Assumed") else "입력"
+    rec["유효평균R"] = round(float(res.get("R_avg", np.nan)), 3)
+    rec["R0"] = round(float(res.get("R0", np.nan)), 1)
     return rec
 
 
@@ -711,7 +717,16 @@ def add_current_rebound_to_stats():
     st.session_state['rebound_records'].append(rec)
     st.session_state['rebound_data'].append(rec['평균'])
     st.session_state['last_added_signature'] = signature
-    st.session_state['last_add_message'] = ("success", f"{point_name} 추가 완료 (평균 {rec['평균']:.2f} MPa, 5개 공식값 포함)")
+    _group = classify_strength_group(rec.get("설계"))
+    st.session_state['last_add_message'] = (
+        "success",
+f"{point_name} 추가 완료 (평균 {rec['평균']:.2f} MPa · 설계 {rec['설계']:g} MPa"
+        + (f" [{DESIGN_FCK_ASSUMED_LABEL}]" if res.get("Design_Fck_Assumed") else "")
+        + f" · {_group} 구역)"
+    )
+    # 방금 추가한 지점이 속한 구역이 통계 탭에 바로 보이도록 선택을 맞춥니다.
+    if _group in (STRENGTH_GROUP_LOW, STRENGTH_GROUP_HIGH):
+        st.session_state['stat_group'] = _group
 
     st.session_state['add_point_name'] = f"P{len(st.session_state['rebound_records']) + 1}"
 
@@ -866,6 +881,23 @@ REBOUND_FORMULA_OPTIONS = ["일본재료", "일본건축", "과기부", "권영�
 REBOUND_FORMULA_NAMES = set(REBOUND_FORMULA_OPTIONS)
 REBOUND_FORMULA_RECOMMEND_THRESHOLD = 40.0
 
+# 설계강도를 입력하지 않았을 때 적용하는 기준값과, 그 사실을 화면·보고서에 남기는 문구.
+# 가정값으로 계산한 결과가 실제 설계강도 기준인 것처럼 읽히지 않도록 어디에나 같은 문구를 씁니다.
+DEFAULT_DESIGN_FCK = 24.0
+DESIGN_FCK_ASSUMED_LABEL = f"미입력, {DEFAULT_DESIGN_FCK:g}MPa 기준"
+
+
+def is_design_fck_missing(value):
+    """설계강도가 입력되지 않았는지(None · 빈 문자열 · NaN) 판별한다."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    try:
+        return bool(np.isnan(float(value)))
+    except (TypeError, ValueError):
+        return False
+
 REBOUND_POINT_POLICY_EXACT_20 = "exact_20"
 REBOUND_POINT_POLICY_MIN_20 = "min_20"
 REBOUND_POINT_POLICY_NO_MINIMUM = "no_minimum"
@@ -899,6 +931,7 @@ for _policy_key, _policy_meta in REBOUND_POINT_POLICY_OPTIONS.items():
 
 REBOUND_POINT_POLICY_LABEL_TO_KEY.update({
     "정확히 20": REBOUND_POINT_POLICY_EXACT_20,
+    "정확히20": REBOUND_POINT_POLICY_EXACT_20,   # 구 양식 호환
     "정확히20개": REBOUND_POINT_POLICY_EXACT_20,
     "20": REBOUND_POINT_POLICY_EXACT_20,
     "exact": REBOUND_POINT_POLICY_EXACT_20,
@@ -981,6 +1014,130 @@ def get_recommended_formulas(design_fck):
     return ["과기부", "권영웅", "KALIS"]
 
 
+STRENGTH_GROUP_LOW = "저강도"
+STRENGTH_GROUP_HIGH = "고강도"
+STRENGTH_GROUP_NONE = "미분류"
+
+
+def classify_strength_group(design_fck):
+    """설계강도로 저강도/고강도 구역을 나눈다. 기준은 공식 자동추천과 같은 값(40MPa)."""
+    try:
+        fck = float(design_fck)
+    except (TypeError, ValueError):
+        return STRENGTH_GROUP_NONE
+    if not np.isfinite(fck) or fck <= 0:
+        return STRENGTH_GROUP_NONE
+    return STRENGTH_GROUP_LOW if fck < REBOUND_FORMULA_RECOMMEND_THRESHOLD else STRENGTH_GROUP_HIGH
+
+
+def get_group_formulas(group):
+    """구역에 적용하는 공식 목록 (get_recommended_formulas 와 항상 같은 결과)."""
+    if group == STRENGTH_GROUP_HIGH:
+        return get_recommended_formulas(REBOUND_FORMULA_RECOMMEND_THRESHOLD)
+    return get_recommended_formulas(REBOUND_FORMULA_RECOMMEND_THRESHOLD - 1.0)
+
+
+def get_group_label(group):
+    t = f"{REBOUND_FORMULA_RECOMMEND_THRESHOLD:g}MPa"
+    if group == STRENGTH_GROUP_HIGH:
+        return f"고강도 (설계 {t} 이상)"
+    if group == STRENGTH_GROUP_LOW:
+        return f"저강도 (설계 {t} 미만)"
+    return "미분류 (설계강도 없음)"
+
+
+def build_group_point_table(records, group):
+    """선택한 구역의 지점별 표.
+
+    · 대표강도 : 자동추천 지점은 구역 공식의 평균, 수동선택 지점은 당시 선택한 공식의 평균(저장값).
+                 저장된 적용공식이 구역 공식과 다르면(구버전 기록 등) 구역 공식으로 다시 평균한다.
+    · 강도비   : 대표강도 ÷ 그 지점의 설계강도 (지점마다 설계강도가 달라도 맞게 계산됨).
+    · 공식간편차: 같은 지점에서 구역 공식끼리 벌어진 폭 (최대-최소) ÷ 평균.
+    """
+    formulas = get_group_formulas(group)
+    rows = []
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        fck = _float_or_nan(rec.get("설계"))
+        if classify_strength_group(fck) != group:
+            continue
+        fvals = [_float_or_nan(rec.get(k)) for k in formulas]
+        finite = [v for v in fvals if np.isfinite(v)]
+        manual = str(rec.get("산정방식", "")).replace(" ", "") == "수동선택"
+        applied = {t.strip() for t in str(rec.get("적용공식") or "").split(",") if t.strip()}
+        if manual or applied == set(formulas):
+            # 계산 당시 저장한 평균을 그대로 씁니다(지점별 보고서 값과 소수점까지 일치).
+            rep_v = _float_or_nan(rec.get("평균"))
+        else:
+            # 이전 버전 기록이거나 설계강도를 고쳐 구역이 바뀐 지점 → 구역 공식으로 다시 평균
+            rep_v = float(np.mean(finite)) if len(finite) == len(formulas) else np.nan
+        f_mean = float(np.mean(finite)) if finite else np.nan
+        spread = ((max(finite) - min(finite)) / f_mean * 100.0) if len(finite) >= 2 and f_mean > 0 else np.nan
+
+        row = {"지점": str(rec.get("지점", "")), "설계": fck, "산정": "수동" if manual else "자동"}
+        for k, v in zip(formulas, fvals):
+            row[k] = round(v, 2) if np.isfinite(v) else np.nan
+        row["대표강도"] = round(rep_v, 2) if np.isfinite(rep_v) else np.nan
+        row["강도비(%)"] = round(rep_v / fck * 100.0, 1) if np.isfinite(rep_v) else np.nan
+        row["공식간편차(%)"] = round(spread, 1) if np.isfinite(spread) else np.nan
+        row["비고"] = DESIGN_FCK_ASSUMED_LABEL if str(rec.get("설계입력", "")).startswith("미입력") else ""
+        rows.append(row)
+
+    cols = ["지점", "설계", "산정"] + formulas + ["대표강도", "강도비(%)", "공식간편차(%)", "비고"]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def summarize_group_stats(point_df, group):
+    """구역 통계표: 대표강도와 구역 공식 각각의 지점 간 평균·표준편차·CV·최소·최대·강도비 평균."""
+    formulas = get_group_formulas(group)
+    fck = pd.to_numeric(point_df["설계"], errors="coerce")
+    out = []
+    for label, col in [("대표강도(적용 평균)", "대표강도")] + [(f, f) for f in formulas]:
+        vals = pd.to_numeric(point_df[col], errors="coerce")
+        ok = vals.notna() & fck.notna()
+        v = vals[ok]
+        if v.empty:
+            continue
+        mu = float(v.mean())
+        sd = float(v.std(ddof=1)) if len(v) >= 2 else np.nan
+        cv = (sd / mu * 100.0) if (np.isfinite(sd) and mu) else np.nan
+        out.append({
+            "구분": label,
+            "지점수": int(len(v)),
+            "평균(MPa)": round(mu, 2),
+            "표준편차σ": round(sd, 2) if np.isfinite(sd) else np.nan,
+            "변동계수CV(%)": round(cv, 2) if np.isfinite(cv) else np.nan,
+            "최소": round(float(v.min()), 2),
+            "최대": round(float(v.max()), 2),
+            "강도비 평균(%)": round(float((v / fck[ok] * 100.0).mean()), 1),
+        })
+    return pd.DataFrame(out)
+
+
+def _records_from_editor(edited_df, originals=None):
+    """통계 탭 표(편집 결과)를 저장용 기록 리스트로 되돌린다. 표시용 컬럼·빈 값은 제거.
+
+    originals(편집 전 기록)를 주면, 표에서 설계강도를 직접 고친 지점은
+    '미입력, 24MPa 기준' 표시를 '입력'으로 바꾼다.
+    """
+    keep = edited_df[edited_df["유지"] == True].drop(columns=["유지", "구분"], errors="ignore")
+    records = []
+    for idx, row in zip(keep.index, keep.to_dict("records")):
+        if originals is not None and 0 <= idx < len(originals) and isinstance(originals[idx], dict):
+            old_fck = _float_or_nan(originals[idx].get("설계"))
+            new_fck = _float_or_nan(row.get("설계"))
+            if np.isfinite(new_fck) and not (np.isfinite(old_fck) and abs(new_fck - old_fck) < 1e-9):
+                row["설계입력"] = "입력"
+        clean = {}
+        for k, v in row.items():
+            if v is None or (isinstance(v, (float, np.floating)) and not np.isfinite(v)):
+                continue
+            clean[k] = v.item() if isinstance(v, np.generic) else v
+        records.append(clean)
+    return records
+
+
 def get_recommended_formula_description(design_fck):
     formulas = get_recommended_formulas(design_fck)
     try:
@@ -1027,7 +1184,7 @@ def parse_readings_text(raw_text):
     return vals
 
 
-def _batch_policy_text(value, default="정확히20"):
+def _batch_policy_text(value, default="20"):
     """엑셀 업로드의 측정정책 셀 정규화.
 
     빈 셀은 NaN 이라 str() 하면 'nan' 이 되고, 그 값이 정책 파서에 들어가면
@@ -1035,8 +1192,25 @@ def _batch_policy_text(value, default="정확히20"):
     """
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return default
+    # 엑셀에서 20 을 숫자로 입력하면 20 또는 20.0 으로 읽힙니다 → '20' 으로 통일
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, (bool, np.bool_)):
+        if float(value).is_integer():
+            return str(int(value))
     text = str(value).strip()
     return text or default
+
+
+def _batch_policy_short_label(value):
+    """업로드 셀 값을 표의 드롭다운 값('20' / '20개이상')으로 통일한다.
+
+    구 양식의 '정확히20', '20개', '20개 이상 허용' 등도 같은 정책으로 인식합니다.
+    알 수 없는 값은 그대로 두어 계산 시 해당 행에 오류 사유가 표시되게 합니다.
+    """
+    text = _batch_policy_text(value)
+    try:
+        return get_rebound_point_policy_short_label(text)
+    except ValueError:
+        return text
 
 
 def _safe_num(v, default, cast=float):
@@ -1226,6 +1400,11 @@ def calculate_strength(
     require_20_points=True,
     point_count_policy=None
 ):
+    # 설계강도 미입력(None·빈 값·NaN) → 24MPa 기준으로 산정하고 결과에 그 사실을 남긴다.
+    design_fck_assumed = is_design_fck_missing(design_fck)
+    if design_fck_assumed:
+        design_fck = DEFAULT_DESIGN_FCK
+
     valid_input, validated = validate_rebound_inputs(
         readings=readings,
         angle=angle,
@@ -1345,6 +1524,8 @@ def calculate_strength(
         "Age_Coeff": age_c,
         "Core_Coeff": ct,
         "Design_Fck": design_fck,
+        "Design_Fck_Assumed": design_fck_assumed,
+        "Design_Fck_Note": DESIGN_FCK_ASSUMED_LABEL if design_fck_assumed else "",
         "Angle": angle,
         "Days": days,
         "Point_Count_Policy": point_policy,
@@ -1530,6 +1711,36 @@ def to_excel(df):
             continue
 
     raise RuntimeError("엑셀 저장 엔진(xlsxwriter/openpyxl)이 설치되어 있지 않습니다.") from last_err
+
+
+# 일괄 PDF 상세표에 실을 컬럼(최대 8개 — generate_pdf_report 의 표시 한도).
+# 예전에는 결과표를 그대로 넘겨 앞 8개 컬럼만 실렸고, 추정강도·강도비가 잘려 나갔습니다.
+BATCH_PDF_COLUMNS = ["지점", "설계", "측정점수", "기각수", "유효평균R", "보정R0", "추정강도", "강도비(%)"]
+_BATCH_PDF_FORMATS = {
+    "설계": "{:.0f}", "측정점수": "{:.0f}", "기각수": "{:.0f}",
+    "유효평균R": "{:.1f}", "보정R0": "{:.1f}", "추정강도": "{:.2f}", "강도비(%)": "{:.1f}",
+}
+
+
+def _batch_pdf_table(final_df):
+    """일괄 결과에서 PDF 용 컬럼만 골라 자릿수를 맞춘 표를 만든다. 계산 실패 행은 빈칸."""
+    cols = [c for c in BATCH_PDF_COLUMNS if c in final_df.columns]
+    out = final_df[cols].copy()
+    assumed = (
+        final_df["설계입력"].astype(str).str.startswith("미입력")
+        if "설계입력" in final_df.columns else pd.Series(False, index=final_df.index)
+    )
+    for col in cols:
+        fmt = _BATCH_PDF_FORMATS.get(col)
+        if fmt is None:
+            out[col] = out[col].astype(str)
+            continue
+        nums = pd.to_numeric(out[col], errors="coerce")
+        out[col] = [fmt.format(v) if pd.notna(v) else "" for v in nums]
+    if "설계" in out.columns:
+        # 설계강도를 입력하지 않은 지점은 PDF 표에서도 구분되게 표시
+        out["설계"] = [f"{v} (미입력)" if (a and v) else v for v, a in zip(out["설계"], assumed)]
+    return out
 
 
 CHECKPOINT_SCHEMA_VERSION = 1
@@ -1829,6 +2040,51 @@ def run_validation_tests():
         "잘못된_파일_거부": checkpoint_errors,
     }))
 
+    # TC9: 통계 탭 구역 분류·지점별 강도비
+    tc9_records = [
+        {"지점": "L1", "설계": 24.0, "산정방식": "자동추천", "적용공식": "일본건축, 일본재료", "평균": 30.0,
+         "일본재료": 29.0, "일본건축": 31.0, "과기부": 40.0, "권영웅": 48.0, "KALIS": 47.0},
+        {"지점": "L2", "설계": 27.0, "산정방식": "수동선택", "적용공식": "KALIS", "평균": 47.0,
+         "일본재료": 29.0, "일본건축": 31.0, "과기부": 40.0, "권영웅": 48.0, "KALIS": 47.0},
+        {"지점": "H1", "설계": 40.0, "산정방식": "자동추천", "적용공식": "과기부, 권영웅, KALIS", "평균": 45.0,
+         "일본재료": 29.0, "일본건축": 31.0, "과기부": 40.0, "권영웅": 48.0, "KALIS": 47.0},
+        {"지점": "OLD", "평균": 30.0, "일본재료": 29.0, "일본건축": 31.0},
+    ]
+    low_df = build_group_point_table(tc9_records, STRENGTH_GROUP_LOW)
+    high_df = build_group_point_table(tc9_records, STRENGTH_GROUP_HIGH)
+    tc9_pass = (
+        classify_strength_group(39.9) == STRENGTH_GROUP_LOW
+        and classify_strength_group(40) == STRENGTH_GROUP_HIGH
+        and classify_strength_group(None) == STRENGTH_GROUP_NONE
+        and low_df["지점"].tolist() == ["L1", "L2"]
+        and high_df["지점"].tolist() == ["H1"]
+        and close(low_df.loc[0, "강도비(%)"], 125.0, 1e-9)          # 30 / 24
+        and close(low_df.loc[1, "대표강도"], 47.0, 1e-9)             # 수동선택 저장값
+        and close(low_df.loc[1, "강도비(%)"], 174.1, 1e-9)          # 47 / 27
+        and close(high_df.loc[0, "강도비(%)"], 112.5, 1e-9)         # 45 / 40
+        and list(high_df.columns[3:6]) == ["과기부", "권영웅", "KALIS"]
+    )
+    results.append(("TC9(통계 구역 분류·지점별 강도비)", tc9_pass, {
+        "저강도": low_df.to_dict("records"), "고강도": high_df.to_dict("records"),
+    }))
+
+    # TC10: 설계강도 미입력 → 24MPa 기준 산정 + 표시
+    ok10a, res10a = calculate_strength([50] * 20, angle=0, days=3000, design_fck=None, core_coeff=1.0)
+    ok10b, res10b = calculate_strength([50] * 20, angle=0, days=3000, design_fck=float("nan"), core_coeff=1.0)
+    ok10c, res10c = calculate_strength([50] * 20, angle=0, days=3000, design_fck=24.0, core_coeff=1.0)
+    tc10_pass = bool(
+        ok10a and res10a["Design_Fck"] == DEFAULT_DESIGN_FCK and res10a["Design_Fck_Assumed"] is True
+        and res10a["Design_Fck_Note"] == "미입력, 24MPa 기준"
+        and res10a["Applied_Formulas"] == ["일본건축", "일본재료"]
+        and ok10b and res10b["Design_Fck_Assumed"] is True
+        and ok10c and res10c["Design_Fck_Assumed"] is False and res10c["Design_Fck_Note"] == ""
+        and close(res10a["Mean_Strength"], res10c["Mean_Strength"], 1e-12)
+    )
+    results.append(("TC10(설계강도 미입력 표시)", tc10_pass, {
+        "미입력(None)": {"설계": res10a.get("Design_Fck"), "표시": res10a.get("Design_Fck_Note")} if ok10a else res10a,
+        "24 직접 입력": {"설계": res10c.get("Design_Fck"), "표시": res10c.get("Design_Fck_Note")} if ok10c else res10c,
+    }))
+
     return results
 
 
@@ -1878,6 +2134,7 @@ with tab1:
     **2. 타격방향 보정 값을 매뉴얼을 참고해서 상향 타격인지 하향타격인지를 구분해서 선택해주세요.**
 
     **3. 재령 등 별도로 적용하지 않을 시 프로그램상에서 재령 3000일, 설계기준강도 24MPa가 적용됩니다.**
+    * 설계강도를 비워 두면 24MPa 기준으로 산정하며, 결과 화면·PDF·통계 탭에 **[미입력, 24MPa 기준]** 으로 표시됩니다.
 
     **4. 코어 보정계수(Ct)가 있으면 입력하세요.**
     * 최종 강도 = Ct × 비파괴(반발경도) 강도
@@ -1887,8 +2144,9 @@ with tab1:
     * 추가 측정값까지 반영해야 하는 경우 [20개 이상 허용]을 선택할 수 있으며, 이때 기각 기준은 20% 이상으로 적용됩니다.
 
     **6. 통계ㆍ비교 탭 활용 안내**
-    * 반발경도 단일평가 후 [통계 분석 목록에 추가] 버튼을 누르면 5개 공식별 결과가 모두 누적됩니다.
-    * 누적된 지점들 간 변동계수(CV)가 가장 낮은 공식을 자동 추천합니다 — 해당 시설물에 가장 안정적인 산정식입니다.
+    * 반발경도 단일평가 후 [통계 분석 목록에 추가] 버튼을 누르면 설계강도·적용공식과 함께 결과가 누적됩니다.
+    * 통계 탭에서 저강도(40MPa 미만) / 고강도(40MPa 이상) 구역을 선택하면 그 구역의 공식만으로 통계를 산정합니다.
+    * 강도비는 지점마다 저장된 설계강도로 계산합니다.
 
     **7. PDF 보고서 출력**
     * 각 평가(반발경도/통계) 결과 하단의 [PDF 다운로드] 버튼으로 정밀안전점검 보고서 부록용 PDF를 받을 수 있습니다.
@@ -1917,7 +2175,7 @@ with tab1:
         st.info("※ 본 프로그램은 각도 선택 시 엑셀(1. 원본) 보정식(2차식)을 그대로 적용하여 $R_0$를 산정합니다.")
 
     with st.expander("🧪 검증용 테스트 케이스 실행(개발/검증)", expanded=False):
-        st.caption("앱 내부 버튼으로 TC0~TC7을 확인할 수 있고, v6부터는 같은 검증을 pytest 명령어로도 자동 실행할 수 있습니다.")
+        st.caption("앱 내부 버튼으로 TC0~TC10을 확인할 수 있고, v6부터는 같은 검증을 pytest 명령어로도 자동 실행할 수 있습니다.")
         if st.button("테스트 실행", type="primary"):
             test_results = run_validation_tests()
             for name, passed, detail in test_results:
@@ -1957,7 +2215,10 @@ with tab2:
                 days = st.number_input("재령(일)", 1, 10000, 3000,
                                       help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용",
                                       key="reb_days")
-                fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="reb_fck")
+                fck_input = st.number_input(
+                    "설계강도(MPa)", min_value=15.0, max_value=100.0, value=None,
+                    placeholder=f"미입력 시 {DEFAULT_DESIGN_FCK:g}", key="reb_fck",
+                    help=f"비워 두면 {DEFAULT_DESIGN_FCK:g}MPa 기준으로 산정하고, 결과·보고서에 [{DESIGN_FCK_ASSUMED_LABEL}]으로 표시합니다.")
                 ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01, key="reb_ct")
             else:
                 c1, c2, c3, c4 = st.columns(4)
@@ -1973,9 +2234,23 @@ with tab2:
                                           help="공용연수(년) × 365 + 양생기간. 기본 3000일(약 8년) 적용",
                                           key="reb_days")
                 with c3:
-                    fck = st.number_input("설계강도(MPa)", 15.0, 100.0, 24.0, key="reb_fck")
+                    fck_input = st.number_input(
+                        "설계강도(MPa)", min_value=15.0, max_value=100.0, value=None,
+                        placeholder=f"미입력 시 {DEFAULT_DESIGN_FCK:g}", key="reb_fck",
+                        help=f"비워 두면 {DEFAULT_DESIGN_FCK:g}MPa 기준으로 산정하고, 결과·보고서에 [{DESIGN_FCK_ASSUMED_LABEL}]으로 표시합니다.")
                 with c4:
                     ct = st.number_input("코어 보정계수 Ct", 0.10, 2.00, 1.00, step=0.01, key="reb_ct")
+
+            # 설계강도 미입력 → 24MPa 기준. 공식 자동추천·강도비가 이 값으로 정해지므로 바로 알립니다.
+            fck_assumed = is_design_fck_missing(fck_input)
+            fck = DEFAULT_DESIGN_FCK if fck_assumed else float(fck_input)
+            if fck_assumed:
+                st.markdown(
+                    f'<div class="hint is-warn"><b>설계강도 {_safe_html(DESIGN_FCK_ASSUMED_LABEL)}</b> · '
+                    '설계강도를 입력하지 않아 기준값으로 산정합니다. '
+                    '공식 자동추천(저강도식)과 강도비가 이 값을 따릅니다.</div>',
+                    unsafe_allow_html=True,
+                )
 
             # 측정점수 정책 선택
             point_policy_labels = [
@@ -2199,7 +2474,7 @@ with tab2:
             rd = parse_readings_text(txt)
             ok, res = calculate_strength(
                 rd, angle, days,
-                design_fck=fck,
+                design_fck=(None if fck_assumed else fck),
                 selected_formulas=selected_methods,
                 core_coeff=ct,
                 require_20_points=True,
@@ -2212,6 +2487,7 @@ with tab2:
                     "angle": angle,
                     "days": days,
                     "fck": fck,
+                    "fck_assumed": bool(res.get("Design_Fck_Assumed", fck_assumed)),
                     "ct": ct,
                     "formula_mode": res.get("Formula_Mode", "자동추천"),
                     "selected_methods": list(selected_methods) if selected_methods else [],
@@ -2241,6 +2517,8 @@ with tab2:
 
         if res is not None:
             result_fck = float(meta.get("fck", fck))
+            result_fck_assumed = bool(meta.get("fck_assumed", res.get("Design_Fck_Assumed", False)))
+            fck_note = f" ({DESIGN_FCK_ASSUMED_LABEL})" if result_fck_assumed else ""
             result_angle = meta.get("angle", angle)
             result_days = meta.get("days", days)
             result_formula_mode = meta.get("formula_mode", res.get("Formula_Mode", "자동추천"))
@@ -2270,7 +2548,7 @@ with tab2:
 <div>
 <div class="result-label">설계강도 대비</div>
 <div class="result-value">{ratio:.0f}<span class="result-unit">%</span></div>
-<div class="result-note">설계기준강도 {result_fck:.0f} MPa</div>
+<div class="result-note">설계기준강도 {result_fck:.0f} MPa{_safe_html(fck_note)}</div>
 </div>
 <div>
 <div class="result-label">참고 검토등급</div>
@@ -2282,6 +2560,9 @@ with tab2:
                 unsafe_allow_html=True,
             )
 
+            if result_fck_assumed:
+                st.warning(f"설계강도 {DESIGN_FCK_ASSUMED_LABEL}으로 산정한 결과입니다. "
+                           "강도비와 검토등급은 실제 설계강도 대비 값이 아닙니다.")
             st.caption(f"측정점수 정책: {result_point_policy_label} / 기각 기준: {result_discard_rule}")
             st.caption(f"평균 산정 방식: {result_formula_mode} / 적용 공식: {', '.join(result_methods)}")
             st.caption("※ 아래 결과는 마지막으로 [계산 실행]을 누른 시점의 입력값 기준입니다. 입력값을 변경한 경우 다시 계산하세요.")
@@ -2355,7 +2636,7 @@ with tab2:
                     "프로젝트명": meta.get("project_name", p_name),
                     "타격 방향": f"{result_angle}°",
                     "재령(일)": int(result_days),
-                    "설계강도(MPa)": f"{result_fck:.1f}",
+                    "설계강도(MPa)": f"{result_fck:.1f}{fck_note}",
                     "측정점수 정책": result_point_policy_label,
                     "기각 판정 기준": result_discard_rule,
                     "측정점수 / 유효점수 / 기각수": f"{res['N']} / {res.get('Effective_N', res['N'] - res['Discard'])} / {res['Discard']}",
@@ -2367,7 +2648,7 @@ with tab2:
                     "평균 산정 방식": result_formula_mode,
                     "적용 공식": ", ".join(result_methods),
                     "평균 추정 압축강도": f"{res['Mean_Strength']:.2f} MPa",
-                    "강도비(설계 대비)": f"{(res['Mean_Strength']/result_fck*100):.1f} %" if result_fck else "-",
+                    "강도비(설계 대비)": (f"{(res['Mean_Strength']/result_fck*100):.1f} %{fck_note}" if result_fck else "-"),
                 }
                 detail_pdf = pd.DataFrame({
                     "공식": list(res["Formulas"].keys()),
@@ -2407,7 +2688,7 @@ with tab2:
             "재령": [3000, 3000],
             "설계": [40, 40],
             "Ct": [1.00, 1.00],
-            "측정정책": ["정확히20", "정확히20"],
+            "측정정책": ["20", "20"],
             "데이터": [
                 "58.4 57 61.8 61.2 60.6 58.9 59.9 58.9 58.2 57.8 61.5 60.1 64.1 57.9 59.3 56.8 57.1 58 58.4 58.0",
                 "32 33 35 34 32 33 35 34 32 33 35 34 32 33 35 34 32 33 35 34"
@@ -2452,9 +2733,9 @@ with tab2:
                             "지점": str(_point_name).strip(),
                             "각도": _safe_num(row.get("각도", 0), 0, int),
                             "재령": _safe_num(row.get("재령", 3000), 3000, int),
-                            "설계": _safe_num(row.get("설계", 24.0), 24.0, float),
+                            "설계": _float_or_nan(row.get("설계")),   # 빈 칸은 비워 둠 → 계산 시 24MPa 기준 + 표시
                             "Ct": _safe_num(row.get("Ct", 1.0), 1.0, float),
-                            "측정정책": _batch_policy_text(row.get("측정정책")),
+                            "측정정책": _batch_policy_short_label(row.get("측정정책")),
                             "데이터": str(row.get("데이터", ""))
                         })
                     except Exception as row_err:
@@ -2472,7 +2753,9 @@ with tab2:
                 "선택": st.column_config.CheckboxColumn("선택", default=True),
                 "각도": st.column_config.SelectboxColumn("각도", options=[90, 45, 0, -45, -90], required=True),
                 "재령": st.column_config.NumberColumn("재령", min_value=1, max_value=100000, default=3000),
-                "설계": st.column_config.NumberColumn("설계", min_value=0.1, max_value=200.0, default=24.0),
+                "설계": st.column_config.NumberColumn(
+                    "설계", min_value=0.1, max_value=200.0,
+                    help=f"비워 두면 {DEFAULT_DESIGN_FCK:g}MPa 기준으로 산정하고 결과에 [{DESIGN_FCK_ASSUMED_LABEL}]으로 표시합니다."),
                 "Ct": st.column_config.NumberColumn("Ct", min_value=0.01, max_value=5.0, default=1.00, step=0.01),
                 "측정정책": st.column_config.SelectboxColumn(
                     "측정정책",
@@ -2481,7 +2764,7 @@ with tab2:
                         REBOUND_POINT_POLICY_OPTIONS[REBOUND_POINT_POLICY_MIN_20]["short_label"],
                     ],
                     required=True,
-                    help="정확히20: 20개가 아니면 무효 / 20개이상: 20개 초과 입력 허용, 기각률 20% 이상 무효"
+                    help="20: 측정값 20개 기준(20개가 아니면 무효, 기각 4개 이상 무효) / 20개이상: 20개 초과 입력 허용, 기각률 20% 이상 무효"
                 ),
             },
             use_container_width=True,
@@ -2499,9 +2782,12 @@ with tab2:
                     rd_list = parse_readings_text(row.get("데이터", ""))
                     ang_v = row.get("각도", 0)
                     age_v = row.get("재령", 3000)
-                    fck_v = row.get("설계", 24.0)
+                    fck_v = row.get("설계")
+                    fck_missing = is_design_fck_missing(fck_v)
+                    if fck_missing:
+                        fck_v = None
                     ct_v = row.get("Ct", 1.0)
-                    policy_v = normalize_rebound_point_policy(row.get("측정정책", "정확히20"))
+                    policy_v = normalize_rebound_point_policy(_batch_policy_text(row.get("측정정책")))
 
                     ok, res = calculate_strength(
                         rd_list,
@@ -2520,6 +2806,7 @@ with tab2:
                         data_entry = {
                             "지점": row.get("지점", "P"),
                             "설계": result_fck,
+                            "설계입력": DESIGN_FCK_ASSUMED_LABEL if res.get("Design_Fck_Assumed") else "입력",
                             "Ct": result_ct,
                             "측정정책": res.get("Point_Count_Policy_Label", get_rebound_point_policy_label(policy_v)),
                             "기각기준": res.get("Discard_Rule", ""),
@@ -2543,7 +2830,8 @@ with tab2:
                     else:
                         batch_res.append({
                             "지점": row.get("지점", "P"),
-                            "설계": _float_or_nan(fck_v),
+                            "설계": DEFAULT_DESIGN_FCK if fck_missing else _float_or_nan(fck_v),
+                            "설계입력": DESIGN_FCK_ASSUMED_LABEL if fck_missing else "입력",
                             "Ct": _float_or_nan(ct_v),
                             "측정정책": get_rebound_point_policy_label(policy_v),
                             "기각기준": "",
@@ -2567,100 +2855,133 @@ with tab2:
                         "오류": f"행 처리 실패: {e}"
                     })
 
-            if batch_res:
-                final_df = pd.DataFrame(batch_res)
-                res_tab1, res_tab2 = st.tabs(["📋 요약", "🔍 세부 데이터"])
-                with res_tab1:
-                    cols = ["지점", "설계", "Ct", "측정정책", "측정점수", "유효점수", "기각수", "공식선택방식", "적용공식", "추정강도", "강도비(%)"]
-                    cols = [c for c in cols if c in final_df.columns]
-                    st.dataframe(final_df[cols], use_container_width=True, hide_index=True)
-                with res_tab2:
-                    st.dataframe(final_df, use_container_width=True, hide_index=True)
+            # 결과는 세션에 보관합니다. 다운로드 버튼을 누르면 화면이 다시 실행되는데,
+            # 버튼 조건문 안에서만 그리면 그 순간 결과 표와 나머지 버튼이 사라집니다.
+            st.session_state['rebound_batch_results'] = batch_res
 
-                st.divider()
-                st.subheader("💾 결과 저장")
-                col_dl1, col_dl2 = st.columns(2)
-                with col_dl1:
-                    try:
-                        excel_data = to_excel(final_df)
-                        st.download_button(
-                            label="📊 엑셀 다운로드",
-                            data=excel_data,
-                            file_name=f"{_safe_filename(p_name)}_반발경도_평가결과_측정정책_Ct포함.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                            use_container_width=True
-                        )
-                    except RuntimeError as e:
-                        st.error(str(e))
-                with col_dl2:
-                    try:
-                        valid_rows = final_df.dropna(subset=["추정강도"]) if "추정강도" in final_df.columns else final_df
-                        if not valid_rows.empty and "추정강도" in valid_rows.columns:
-                            mean_s = float(valid_rows["추정강도"].mean())
-                            summary_b = {
-                                "프로젝트명": p_name,
-                                "평가 지점 수": len(final_df),
-                                "유효 지점 수": len(valid_rows),
-                                "전체 평균 추정강도": f"{mean_s:.2f} MPa",
-                            }
-                        else:
-                            summary_b = {"프로젝트명": p_name, "평가 지점 수": len(final_df)}
-                        pdf_bytes = cached_pdf_report(
-                            project_name=p_name,
-                            report_type="반발경도(다중지점)",
-                            summary_dict=summary_b,
-                            detail_df=final_df,
-                            notes="다중 지점 일괄 평가 결과"
-                        )
-                        st.download_button(
-                            label="📄 PDF 다운로드",
-                            data=pdf_bytes,
-                            file_name=f"{_safe_filename(p_name)}_반발경도_보고서.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-                    except RuntimeError as e:
-                        st.warning(str(e))
+        batch_res = st.session_state.get('rebound_batch_results')
+        if batch_res:
+            final_df = pd.DataFrame(batch_res)
+            _n_assumed_b = (
+                int(final_df["설계입력"].astype(str).str.startswith("미입력").sum())
+                if "설계입력" in final_df.columns else 0
+            )
+            if _n_assumed_b:
+                st.warning(f"설계강도를 입력하지 않은 {_n_assumed_b}개 지점은 {DEFAULT_DESIGN_FCK:g}MPa 기준으로 산정했습니다 "
+                           f"(설계입력 = {DESIGN_FCK_ASSUMED_LABEL}). 이 지점의 강도비는 실제 설계강도 대비 값이 아닙니다.")
+            st.caption("※ 아래 결과는 마지막으로 [일괄 계산 실행]을 누른 시점 기준입니다. 표를 수정했다면 다시 계산하세요.")
+            res_tab1, res_tab2 = st.tabs(["📋 요약", "🔍 세부 데이터"])
+            with res_tab1:
+                cols = ["지점", "설계", "설계입력", "Ct", "측정정책", "측정점수", "유효점수", "기각수", "공식선택방식", "적용공식", "추정강도", "강도비(%)"]
+                cols = [c for c in cols if c in final_df.columns]
+                st.dataframe(final_df[cols], use_container_width=True, hide_index=True)
+            with res_tab2:
+                st.dataframe(final_df, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("💾 결과 저장")
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                try:
+                    excel_data = to_excel(final_df)
+                    st.download_button(
+                        label="📊 엑셀 다운로드",
+                        data=excel_data,
+                        file_name=f"{_safe_filename(p_name)}_반발경도_평가결과_측정정책_Ct포함.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        use_container_width=True
+                    )
+                except RuntimeError as e:
+                    st.error(str(e))
+            with col_dl2:
+                try:
+                    valid_rows = final_df.dropna(subset=["추정강도"]) if "추정강도" in final_df.columns else final_df
+                    if not valid_rows.empty and "추정강도" in valid_rows.columns:
+                        mean_s = float(valid_rows["추정강도"].mean())
+                        summary_b = {
+                            "프로젝트명": p_name,
+                            "평가 지점 수": len(final_df),
+                            "유효 지점 수": len(valid_rows),
+                            "전체 평균 추정강도": f"{mean_s:.2f} MPa",
+                        }
+                    else:
+                        summary_b = {"프로젝트명": p_name, "평가 지점 수": len(final_df)}
+                    pdf_bytes = cached_pdf_report(
+                        project_name=p_name,
+                        report_type="반발경도(다중지점)",
+                        summary_dict=summary_b,
+                        detail_df=_batch_pdf_table(final_df),
+                        notes="다중 지점 일괄 평가 결과 (전체 항목은 엑셀 파일 참조)"
+                              + (f"\n설계 칸의 '(미입력)'은 설계강도 {DESIGN_FCK_ASSUMED_LABEL}으로 산정한 지점입니다."
+                                 if _n_assumed_b else "")
+                    )
+                    st.download_button(
+                        label="📄 PDF 다운로드",
+                        data=pdf_bytes,
+                        file_name=f"{_safe_filename(p_name)}_반발경도_보고서.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                except RuntimeError as e:
+                    st.warning(str(e))
 
 # ---------------------------------------------------------
 # [Tab 4] 통계 및 비교 (세션 연동 적용)
 # ---------------------------------------------------------
 with tab4:
-    st.subheader("📊 강도 통계 및 공식 적합성 비교")
+    st.subheader("📊 강도 통계 (저강도 · 고강도 구역별)")
 
-    st.caption("반발경도 단일 평가 후 [통계 분석 목록에 추가] 버튼으로 누적된 지점별 5개 공식 결과를 비교하여, "
-               "변동계수(CV)가 가장 낮은 = 해당 시설물에 가장 안정적인 공식을 자동 추천합니다.")
+    st.caption("반발경도 단일 평가 후 [통계 분석 목록에 추가]로 누적한 지점을 설계강도 기준으로 "
+               "저강도/고강도 구역으로 나누고, 선택한 구역의 공식만으로 통계를 산정합니다. "
+               "강도비는 지점마다 저장된 설계강도로 계산합니다.")
 
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st_fck = st.number_input("기준 설계강도(MPa)", 15.0, 100.0, 24.0, key="stat_fck")
-    with c2:
-        st.markdown("**누적된 평가 지점**")
-        st.caption(f"현재 {len(st.session_state['rebound_records'])}개 지점 / "
-                   f"수동 입력 데이터 {len(st.session_state['rebound_data'])}개")
-
-    st.divider()
-    st.markdown("### 📌 지점별 공식 비교 (자동 추천)")
+    group_rep_vals = []          # 하단 간이 분석 칸에 넘길 선택 구역의 대표강도
+    selected_group = st.session_state.get("stat_group", STRENGTH_GROUP_LOW)
 
     if st.session_state['rebound_records']:
-        recs_df = pd.DataFrame(st.session_state['rebound_records'])
+        _records = st.session_state['rebound_records']
+        recs_df = pd.DataFrame(_records)
+        for _c in ["지점", "설계", "설계입력", "산정방식", "적용공식", "평균"]:
+            if _c not in recs_df.columns:
+                recs_df[_c] = np.nan
+        recs_df["설계"] = pd.to_numeric(recs_df["설계"], errors="coerce")
+        _lead = ["지점", "설계", "설계입력", "산정방식", "적용공식", "평균"]
+        _f_cols = [c for c in REBOUND_FORMULA_OPTIONS if c in recs_df.columns]
+        _rest = [c for c in recs_df.columns if c not in _lead + _f_cols]
+        recs_df = recs_df[_lead + _f_cols + _rest]
         recs_df.insert(0, "유지", True)
+        recs_df.insert(3, "구분", [classify_strength_group(v) for v in recs_df["설계"]])
+
+        # 기록이 바뀌면(추가·삭제·불러오기) 표의 편집 상태를 새로 시작합니다.
+        # 키를 고정하면 삭제 전의 체크 해제가 행 번호로 남아 엉뚱한 지점에 적용될 수 있습니다.
+        _recs_sig = hashlib.blake2b(
+            json.dumps(_records, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8"),
+            digest_size=6,
+        ).hexdigest()
+
+        st.markdown("**누적된 평가 지점**")
         edited_recs = st.data_editor(
             recs_df,
             column_config={
-                "유지": st.column_config.CheckboxColumn("유지", default=True, help="해제 후 [데이터 갱신]을 누르면 제거됩니다"),
+                "유지": st.column_config.CheckboxColumn("유지", default=True, help="해제 후 [변경 적용]을 누르면 제거됩니다"),
+                "설계": st.column_config.NumberColumn(
+                    "설계(MPa)", min_value=1.0, max_value=200.0, step=1.0, format="%.1f",
+                    help="지점의 설계기준강도. 비어 있는 지점(이전 버전 저장 파일)은 여기에 입력하면 구역이 정해집니다."),
+                "구분": st.column_config.TextColumn("구분", help="설계강도 40MPa 미만 = 저강도, 이상 = 고강도"),
             },
+            # 계산값은 손으로 고칠 수 없게 잠급니다. 고칠 수 있는 것은 [유지]와 [설계]뿐입니다.
+            disabled=[c for c in recs_df.columns if c not in ("유지", "설계")],
             use_container_width=True, hide_index=True, num_rows="fixed",
-            key="recs_editor"
+            key=f"recs_editor_{_recs_sig}"
         )
 
         b1, b2 = st.columns(2)
         with b1:
-            if st.button("🔄 데이터 갱신(체크 해제 항목 삭제)", use_container_width=True):
-                keep = edited_recs[edited_recs["유지"] == True].drop(columns=["유지"]).to_dict("records")
+            if st.button("🔄 변경 적용 (체크 해제 삭제 · 설계강도 수정)", use_container_width=True):
+                keep = _records_from_editor(edited_recs, originals=_records)
                 st.session_state['rebound_records'] = keep
-                st.session_state['rebound_data'] = [r["평균"] for r in keep]
+                st.session_state['rebound_data'] = [r["평균"] for r in keep if "평균" in r]
                 st.rerun()
         with b2:
             if st.button("🗑️ 전체 초기화", use_container_width=True):
@@ -2668,111 +2989,174 @@ with tab4:
                 st.session_state['rebound_data'] = []
                 st.rerun()
 
-        formula_cols = [c for c in REBOUND_FORMULA_OPTIONS if c in edited_recs.columns]
-        active_recs = edited_recs[edited_recs["유지"] == True]
+        # 통계는 표의 현재 상태(체크·설계강도 수정 포함) 기준으로 바로 계산합니다.
+        active_records = _records_from_editor(edited_recs, originals=_records)
+        group_counts = {STRENGTH_GROUP_LOW: 0, STRENGTH_GROUP_HIGH: 0, STRENGTH_GROUP_NONE: 0}
+        for _r in active_records:
+            group_counts[classify_strength_group(_r.get("설계"))] += 1
 
-        if len(active_recs) >= 2 and formula_cols:
-            stats_rows = []
-            for fcol in formula_cols:
-                vals = pd.to_numeric(active_recs[fcol], errors="coerce").dropna()
-                if len(vals) >= 2:
-                    mu = float(vals.mean())
-                    sd = float(vals.std(ddof=1))
-                    cv = (sd / mu * 100.0) if mu else np.nan
-                    stats_rows.append({
-                        "공식": fcol,
-                        "지점수": len(vals),
-                        "평균(MPa)": round(mu, 2),
-                        "표준편차σ": round(sd, 2),
-                        "변동계수CV(%)": round(cv, 2) if np.isfinite(cv) else np.nan,
-                        "강도비(%)": round(mu / st_fck * 100, 1) if st_fck else np.nan,
-                    })
+        if group_counts[STRENGTH_GROUP_NONE]:
+            st.warning(
+                f"설계강도가 없는 지점이 {group_counts[STRENGTH_GROUP_NONE]}개 있습니다(미분류). "
+                "이전 버전에서 저장한 지점입니다. 위 표의 [설계] 칸에 값을 입력하면 구역에 포함됩니다. "
+                "미분류 지점은 통계에서 제외됩니다."
+            )
 
-            if stats_rows:
-                stats_df = pd.DataFrame(stats_rows).sort_values("변동계수CV(%)").reset_index(drop=True)
-                best = stats_df.iloc[0]
-                worst = stats_df.iloc[-1]
+        st.divider()
+        if "stat_group" not in st.session_state:
+            st.session_state["stat_group"] = (
+                STRENGTH_GROUP_HIGH
+                if group_counts[STRENGTH_GROUP_HIGH] > group_counts[STRENGTH_GROUP_LOW]
+                else STRENGTH_GROUP_LOW
+            )
+        selected_group = st.radio(
+            "분석 구역 선택",
+            [STRENGTH_GROUP_LOW, STRENGTH_GROUP_HIGH],
+            format_func=lambda g: f"{get_group_label(g)} · {group_counts[g]}개 지점",
+            horizontal=True,
+            key="stat_group",
+        )
+        group_formulas = get_group_formulas(selected_group)
+        st.markdown(
+            '<div class="hint is-accent"><b>적용 공식</b> · '
+            f'{_safe_html(", ".join(group_formulas))} 의 평균을 지점 대표강도로 사용합니다.</div>',
+            unsafe_allow_html=True,
+        )
 
-                st.markdown(
-                    f"""
-                    <div class="recommend-card">
-                      <div class="recommend-title">✅ 자동 추천 공식 · 변동계수(CV) 최저</div>
-                      <div class="recommend-main">{_safe_html(str(best['공식']))}</div>
-                      <div class="recommend-sub">CV {best['변동계수CV(%)']:.2f}% · 평균 {best['평균(MPa)']:.2f} MPa · 강도비 {best['강도비(%)']:.1f}%</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.caption(f"※ 변동계수가 가장 낮은 공식이 해당 시설물의 콘크리트 특성에 가장 일관된 결과를 보입니다. "
-                           f"가장 부적합: {worst['공식']} (CV {worst['변동계수CV(%)']:.2f}%)")
+        point_df = build_group_point_table(active_records, selected_group)
+        valid_pts = point_df.dropna(subset=["대표강도"])
+        _dropped = len(point_df) - len(valid_pts)
+        if _dropped:
+            st.warning(f"구역 공식 값이 저장되지 않은 지점 {_dropped}개는 통계에서 제외했습니다.")
 
-                recommended_set = set(get_recommended_formulas(st_fck))
-                if best["공식"] not in recommended_set:
-                    st.warning(f"⚠️ 자동 추천 공식({best['공식']})이 설계강도 {st_fck}MPa 기준 "
-                               f"권장 공식군({', '.join(recommended_set)})과 다릅니다. "
-                               f"책임기술자 검토 후 채택 여부를 결정하세요.")
-
-                st.dataframe(stats_df, use_container_width=True, hide_index=True)
-
-                cv_chart = alt.Chart(stats_df).mark_bar().encode(
-                    x=alt.X("공식:N", sort=stats_df["공식"].tolist()),
-                    y=alt.Y("변동계수CV(%):Q"),
-                    color=alt.condition(
-                        alt.datum["공식"] == best["공식"],
-                        alt.value("#15803D"),
-                        alt.value("#546274")
-                    )
-                ).properties(height=280, title="공식별 변동계수 비교 (낮을수록 안정적)")
-                st.altair_chart(cv_chart, use_container_width=True)
-
-                melted = active_recs.melt(id_vars=["지점"],
-                                           value_vars=formula_cols,
-                                           var_name="공식", value_name="강도")
-                melted["강도"] = pd.to_numeric(melted["강도"], errors="coerce")
-                point_chart = alt.Chart(melted).mark_circle(size=80, opacity=0.7).encode(
-                    x=alt.X("지점:N"),
-                    y=alt.Y("강도:Q", title="추정강도(MPa)"),
-                    color="공식:N",
-                    tooltip=["지점", "공식", "강도"]
-                ).properties(height=300, title="지점별 공식 결과 분포")
-                fck_rule = alt.Chart(pd.DataFrame({"y": [st_fck]})).mark_rule(
-                    color="#DC2626", strokeDash=[5, 3]).encode(y="y")
-                st.altair_chart(point_chart + fck_rule, use_container_width=True)
-
-                with st.expander("📄 통계·비교 PDF 보고서 다운로드", expanded=False):
-                    summary_st = {
-                        "프로젝트명": p_name,
-                        "기준 설계강도": f"{st_fck:.1f} MPa",
-                        "평가 지점 수": len(active_recs),
-                        "추천 공식": f"{best['공식']} (CV {best['변동계수CV(%)']:.2f}%)",
-                        "추천 공식 평균강도": f"{best['평균(MPa)']:.2f} MPa",
-                        "강도비(설계 대비)": f"{best['강도비(%)']:.1f} %",
-                    }
-                    try:
-                        pdf_bytes = cached_pdf_report(
-                            project_name=p_name, report_type="통계·비교",
-                            summary_dict=summary_st, detail_df=stats_df,
-                            notes="변동계수(CV) 최저 공식이 해당 시설물 콘크리트 특성에 가장 안정적이며, "
-                                  "설계강도 기준 권장 공식군과의 일치 여부를 함께 검토하여 채택하시기 바랍니다."
-                        )
-                        st.download_button("📥 PDF 다운로드", data=pdf_bytes,
-                                          file_name=f"{_safe_filename(p_name)}_통계비교_보고서.pdf",
-                                          mime="application/pdf", use_container_width=True)
-                    except RuntimeError as e:
-                        st.warning(str(e))
+        if valid_pts.empty:
+            st.info(f"{get_group_label(selected_group)} 구역에 해당하는 지점이 없습니다.")
         else:
-            st.info("공식별 비교는 최소 2개 지점이 필요합니다.")
+            group_rep_vals = [float(v) for v in valid_pts["대표강도"]]
+            stats_df = summarize_group_stats(valid_pts, selected_group)
+            rep_row = stats_df.iloc[0]
+            n_pts = int(rep_row["지점수"])
+            ratio_min_idx = valid_pts["강도비(%)"].idxmin()
+            ratio_min = float(valid_pts.loc[ratio_min_idx, "강도비(%)"])
+            ratio_min_name = str(valid_pts.loc[ratio_min_idx, "지점"])
+            ratio_mean = float(rep_row["강도비 평균(%)"])
+            cv_txt = f"{rep_row['변동계수CV(%)']:.2f}%" if pd.notna(rep_row["변동계수CV(%)"]) else "— (2개 지점 이상 필요)"
+            spread_mean = pd.to_numeric(valid_pts["공식간편차(%)"], errors="coerce").mean()
+            spread_txt = f"{spread_mean:.1f}%" if pd.notna(spread_mean) else "—"
+            n_under = int((valid_pts["강도비(%)"] < 100).sum())
+            n_manual = int((valid_pts["산정"] == "수동").sum())
+            n_assumed = int((valid_pts["비고"] != "").sum())
+
+            # [중요] HTML 은 한 줄로 조립합니다(빈 줄이 끼면 태그가 그대로 노출됨).
+            st.markdown(
+                "".join([
+                    '<div class="recommend-card">',
+                    f'<div class="recommend-title">{_safe_html(get_group_label(selected_group))} 구역 요약 · {n_pts}개 지점</div>',
+                    f'<div class="recommend-main">{rep_row["평균(MPa)"]:.2f} MPa</div>',
+                    '<div class="recommend-sub">',
+                    f'강도비 평균 {ratio_mean:.1f}% · 최소 {ratio_min:.1f}% ({_safe_html(ratio_min_name)})',
+                    f' · 설계강도 미달 {n_under}개 지점<br/>',
+                    f'지점 간 변동계수 {cv_txt} · 공식 간 편차 평균 {spread_txt}',
+                    (f'<br/>설계강도 {_safe_html(DESIGN_FCK_ASSUMED_LABEL)} 지점 {n_assumed}개 포함' if n_assumed else ''),
+                    '</div></div>',
+                ]),
+                unsafe_allow_html=True,
+            )
+            if n_assumed:
+                st.warning(
+                    f"설계강도를 입력하지 않아 {DEFAULT_DESIGN_FCK:g}MPa 기준으로 산정한 지점이 {n_assumed}개 있습니다 "
+                    f"(표의 비고 = {DESIGN_FCK_ASSUMED_LABEL}). 이 지점의 강도비는 실제 설계강도 대비 값이 아닙니다. "
+                    "설계강도를 확인했다면 위 표의 [설계] 칸을 고치고 [변경 적용]을 누르세요."
+                )
+            if n_manual:
+                st.caption(f"※ 공식을 직접 선택한 지점 {n_manual}개는 당시 선택한 공식의 평균을 대표강도로 사용했습니다(표의 산정 = 수동).")
+
+            st.markdown("**지점별 결과**")
+            st.dataframe(valid_pts, use_container_width=True, hide_index=True)
+
+            st.markdown("**구역 통계**")
+            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            st.caption("※ 공식별 변동계수 차이는 식의 절편 차이에서 생기는 값이므로 공식의 우열을 판단하는 근거로 쓰지 않습니다. "
+                       "공식 적합성은 코어 강도와 비교해 판단하세요.")
+
+            ratio_chart = alt.Chart(valid_pts).mark_bar().encode(
+                x=alt.X("지점:N", sort=valid_pts["지점"].tolist(), title=None),
+                y=alt.Y("강도비(%):Q", title="강도비 (%) · 지점별 설계강도 기준"),
+                color=alt.condition(alt.datum["강도비(%)"] >= 100, alt.value("#15803D"), alt.value("#DC2626")),
+                tooltip=["지점", "설계", "대표강도", "강도비(%)"],
+            ).properties(height=280, title="지점별 강도비 (빨간 점선 = 100%)")
+            ratio_rule = alt.Chart(pd.DataFrame({"y": [100]})).mark_rule(
+                color="#DC2626", strokeDash=[5, 3], size=2).encode(y="y:Q")
+            st.altair_chart(ratio_chart + ratio_rule, use_container_width=True)
+
+            melted = valid_pts.melt(id_vars=["지점"], value_vars=group_formulas,
+                                    var_name="공식", value_name="강도")
+            melted["강도"] = pd.to_numeric(melted["강도"], errors="coerce")
+            point_chart = alt.Chart(melted).mark_circle(size=80, opacity=0.7).encode(
+                x=alt.X("지점:N", sort=valid_pts["지점"].tolist(), title=None),
+                y=alt.Y("강도:Q", title="추정강도(MPa)"),
+                color="공식:N",
+                tooltip=["지점", "공식", "강도"]
+            ).properties(height=300, title="지점별 공식 결과 분포 (검은 눈금 = 그 지점의 설계강도)")
+            fck_ticks = alt.Chart(valid_pts).mark_tick(color="#0F172A", thickness=2, size=28).encode(
+                x=alt.X("지점:N", sort=valid_pts["지점"].tolist()),
+                y=alt.Y("설계:Q"),
+                tooltip=["지점", "설계"],
+            )
+            st.altair_chart(point_chart + fck_ticks, use_container_width=True)
+
+            with st.expander(f"📄 {selected_group} 구역 통계 PDF 보고서 다운로드", expanded=False):
+                _fck_vals = sorted(set(float(v) for v in valid_pts["설계"]))
+                summary_st = {
+                    "프로젝트명": p_name,
+                    "분석 구역": get_group_label(selected_group),
+                    "적용 공식": ", ".join(group_formulas),
+                    "평가 지점 수": n_pts,
+                    "설계강도(MPa)": ", ".join(f"{v:g}" for v in _fck_vals),
+                    "평균 추정강도(대표강도 평균)": f"{rep_row['평균(MPa)']:.2f} MPa",
+                    "강도비 평균 / 최소": f"{ratio_mean:.1f} % / {ratio_min:.1f} % ({ratio_min_name})",
+                    "지점 간 변동계수": cv_txt,
+                    "공식 간 편차 평균": spread_txt,
+                }
+                if n_assumed:
+                    summary_st[f"설계강도 {DESIGN_FCK_ASSUMED_LABEL}"] = f"{n_assumed}개 지점 (설계 칸에 '(미입력)' 표시)"
+                pdf_cols = ["지점", "설계", "산정"] + group_formulas + ["대표강도", "강도비(%)"]
+                pdf_df = valid_pts[pdf_cols].copy()
+                for _c in pdf_cols:
+                    if _c == "설계":
+                        pdf_df[_c] = [f"{v:g}" + (" (미입력)" if note else "")
+                                      for v, note in zip(valid_pts["설계"], valid_pts["비고"])]
+                    elif _c == "강도비(%)":
+                        pdf_df[_c] = [f"{v:.1f}" for v in pdf_df[_c]]
+                    elif _c not in ("지점", "산정"):
+                        pdf_df[_c] = [f"{v:.2f}" if pd.notna(v) else "" for v in pdf_df[_c]]
+                try:
+                    pdf_bytes = cached_pdf_report(
+                        project_name=p_name, report_type=f"통계 · {selected_group} 구역",
+                        summary_dict=summary_st, detail_df=pdf_df,
+                        notes="대표강도는 구역 적용 공식의 평균이며, 강도비는 지점별 설계강도 기준입니다.\n"
+"산정이 '수동'인 지점은 책임기술자가 직접 선택한 공식의 평균을 사용했습니다."
+                              + (f"\n설계 칸의 '(미입력)'은 설계강도 {DESIGN_FCK_ASSUMED_LABEL}으로 산정한 지점입니다."
+                                 if n_assumed else "")
+                    )
+                    st.download_button("📥 PDF 다운로드", data=pdf_bytes,
+                                      file_name=f"{_safe_filename(p_name)}_통계_{selected_group}_보고서.pdf",
+                                      mime="application/pdf", use_container_width=True)
+                except RuntimeError as e:
+                    st.warning(str(e))
 
     else:
         st.info("⬅️ 먼저 '반발경도' 탭에서 단일 지점 평가를 수행하고 [통계 분석 목록에 추가] 버튼을 눌러주세요.")
 
     st.divider()
     with st.expander("📋 수동 입력 강도 데이터 통계 (간이 분석)", expanded=False):
-        session_data_str = " ".join([f"{x:.1f}" for x in st.session_state['rebound_data']])
+        # 기준 설계강도는 이 간이 분석에서만 씁니다(구역 통계는 지점별 설계강도를 사용).
+        st_fck = st.number_input("비교 기준 설계강도(MPa)", 15.0, 100.0, 24.0, key="stat_fck")
+
+        session_data_str = " ".join([f"{x:.1f}" for x in group_rep_vals])
         default_stat_txt = session_data_str if session_data_str else "24.5 26.2 23.1 21.8 25.5 27.0"
 
         # [수정 A] st.text_area는 key가 세션에 존재하면 value 인자를 무시한다.
-        # 그대로 두면 반발경도 탭에서 지점을 추가해도 이 칸이 첫 렌더 값에 고정된다.
         # 누적 데이터의 서명이 바뀐 경우에만 세션 값을 직접 갱신해,
         # 사용자가 손으로 편집한 내용은 보존한다.
         if 'stat_raw' not in st.session_state:
@@ -2783,8 +3167,8 @@ with tab4:
             st.session_state['_stat_sig'] = session_data_str
 
         if session_data_str:
-            st.caption(f"↺ 반발경도 탭 누적 지점 {len(st.session_state['rebound_data'])}개의 "
-                       "평균강도가 자동 반영됩니다. 직접 수정해도 됩니다.")
+            st.caption(f"↺ 위에서 선택한 {selected_group} 구역 {len(group_rep_vals)}개 지점의 "
+                       "대표강도가 자동 반영됩니다. 직접 수정해도 됩니다.")
 
         raw_txt = st.text_area(
             "강도 데이터 목록",
@@ -2903,7 +3287,7 @@ if _pending_restore:
         dlg_col1, dlg_col2 = st.columns(2)
         if dlg_col1.button("예, 불러오기", type="primary", use_container_width=True):
             for _k, _v in _pending_restore["updates"].items():
-                if _v is None:
+                if _v is None and _k != "reb_fck":   # 설계강도는 '미입력'(None)도 그대로 복원
                     continue
                 st.session_state[_k] = _v
             st.session_state["last_added_signature"] = None
